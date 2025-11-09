@@ -1,0 +1,116 @@
+:root {
+  --nv-green: #76B900;
+  --bg: #f7f7f8;
+  --panel: #ffffff;
+  --text: #111111;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --progress-bg: #e6f5cf;
+}
+
+* { box-sizing: border-box; }
+html, body, #__next { height: 100%; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans, "Apple Color Emoji", "Segoe UI Emoji";
+  color: var(--text);
+  background: var(--bg);
+}
+
+.app { display: flex; min-height: 100vh; }
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  width: 280px;
+  min-height: 100vh;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 16px;
+}
+
+.sidebar-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.title { font-weight: 700; font-size: 16px; line-height: 1.2; }
+
+.progress-overview { margin-top: 12px; }
+.progress-line { width: 100%; height: 10px; background: var(--progress-bg); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.progress-bar { height: 100%; background: var(--nv-green); width: 0%; transition: width 200ms ease; }
+.progress-text { margin-top: 8px; font-size: 12px; color: var(--muted); }
+
+.sidebar-controls { display: grid; gap: 8px; margin-top: 12px; }
+
+.btn { appearance: none; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.btn:hover { border-color: #cfd5df; }
+.btn.primary { background: var(--nv-green); border-color: #66a300; color: #0a0a0a; }
+.btn.danger { border-color: #ef4444; color: #991b1b; }
+
+.topic-list { margin-top: 12px; display: grid; gap: 6px; }
+.topic-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: #fff; cursor: pointer; }
+.topic-item:hover { border-color: #cfd5df; }
+.topic-item.active { outline: 2px solid var(--nv-green); }
+.topic-item.complete { background: #f4faeb; }
+.topic-item-title { font-size: 13px; font-weight: 600; }
+.topic-item-meta { font-size: 12px; color: var(--muted); }
+.check { color: var(--nv-green); font-weight: 800; }
+
+.main { flex: 1; padding: 20px; }
+.topic-section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; scroll-margin-top: 16px; }
+.topic-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.topic-title { font-size: 18px; font-weight: 700; }
+.topic-weight { font-size: 12px; color: var(--muted); }
+.subtopics { margin: 10px 0 14px; }
+.subtopics ul { margin: 8px 0 0; padding-left: 18px; }
+.subtopics li { margin: 4px 0; font-size: 14px; }
+.readings h4 { margin: 0 0 8px; }
+.reading-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.reading-row:first-of-type { border-top: none; }
+.reading-link { color: #0066cc; text-decoration: none; font-weight: 600; }
+.reading-link:hover { text-decoration: underline; }
+.reading-meta { margin-left: 8px; font-size: 12px; color: var(--muted); }
+.icon-btn { appearance: none; border: 1px solid var(--border); background: #fff; border-radius: 6px; padding: 2px 6px; cursor: pointer; font-size: 12px; }
+.icon-btn:hover { border-color: #cfd5df; }
+.reading-notes { margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: #fff; }
+.notes { margin-top: 12px; }
+.notes-header { display: flex; align-items: center; justify-content: space-between; }
+.notes-status { font-size: 12px; color: var(--muted); }
+.textarea { margin-top: 8px; width: 100%; min-height: 120px; border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: 14px; resize: vertical; }
+.char-count { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.sidebar-toggle { display: none; }
+
+/* Questions */
+.questions { margin-top: 12px; }
+.question-list { margin: 10px 0 0; padding-left: 18px; }
+.question-item { margin: 6px 0; }
+.ai-questions .question-item { margin: 10px 0; }
+
+/* Rich text editor */
+.rte { border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+.rte-toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border-bottom: 1px solid var(--border); background: #fafafa; border-top-left-radius: 10px; border-top-right-radius: 10px; }
+.rte-button { appearance: none; border: 1px solid var(--border); background: #fff; padding: 6px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.rte-button:hover { border-color: #cfd5df; }
+.rte-sep { width: 1px; background: var(--border); margin: 0 2px; }
+.rte-editor { min-height: 160px; outline: none; border: none; border-radius: 0 0 10px 10px; }
+.rte-editor:empty:before { content: attr(data-placeholder); color: var(--muted); }
+.rte-editor { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
+.rte-editor p { margin: 8px 0; line-height: 1.5; }
+.rte-editor ul, .rte-editor ol { margin: 8px 0 8px 18px; }
+.rte-editor li { margin: 4px 0; }
+.rte-editor h1, .rte-editor h2, .rte-editor h3 { margin: 12px 0 6px; line-height: 1.25; }
+.rte-editor blockquote { margin: 8px 0; padding-left: 10px; border-left: 3px solid var(--border); color: #374151; }
+.rte-editor pre { background: #f7f7f8; padding: 8px; border-radius: 8px; overflow: auto; }
+.subtopics .reading-notes { max-height: 420px; overflow: auto; }
+
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+.modal-dialog { width: min(720px, 100%); background: #fff; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); background: #fafafa; }
+.modal-body { padding: 12px; max-height: 70vh; overflow: auto; }
+
+@media (max-width: 900px) {
+  .app { flex-direction: column; }
+  .sidebar { position: relative; min-height: auto; width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+  .sidebar-collapsed .topic-list, .sidebar-collapsed .sidebar-controls, .sidebar-collapsed .progress-overview { display: none; }
+  .sidebar-toggle { display: inline-flex; }
+}
+

@@ -1,0 +1,58 @@
+Mastering LLM Techniques Training 
+The architecture of an LLM is often called an encoder, decoder, or encoder-decoder model.
+
+Model architectures define the backbone of transformer networks; the architecture is often called encoder, decoder, or encoder-decoder
+BERT [Bi-Directional Encoder Representation from Transformers]: 
+Encoder-only architecture; best suited for tasks that understand language; suitable for classification and sentiment analysis
+GPT (Generative Pre-trained Transformer):
+decoder-only architecture suited for generative tasks, and fine-tuned on labeled data on discriminative tasks
+uni-directional - context only flows forward
+good for textual entailment; sentence similarity; question answering
+Text-to-Text (Sequence to Sequence models): 
+encoder-decoder architecture
+leverages transfer learning to convert text-based language problem into a text-to-text format
+context flows in both directions; text-in and text-out
+good for translation; Q&A; summarization
+
+Mixture of Experts (MoE):
+scale up model capacity while adding minimal computaiton overhead; converts dense into sparse models
+many expert models + sparse gating function
+generalizes well tasks for computational efficeiny during inference, with low latency
+expansion to multimodal models: CNN for images and transformers for text
+Tokenizers:
+tokenization = splitting text into smaller units (tokens) that become the basic building block for LLMs
+extracted tokens build a vocabulary index mapping tokens to numeric IDs
+encoder = numeric tokens are encoded into vectors representing each token's meaning
+decoder = LLMs perform generation and tokenizers decode the numeric vectors back into text
+subword-based tokenizers have gained popularity - split rare words into meaningful, smaller subword
+BPE (Byte Pair encoding): starts with character vocabulary and iteratively merges frequent adjacent character pairs into new vocabulary terms
+WordPiece: leverages the probabilistic nature of the language to merge characters to maximize training data likelihood
+Unigram: starts with a large vocabulary, calculates the probability of tokens, and removes tokens based on a loss function
+SentencePiece: learns subword units from raw text based on language modeling objectives and uses Unigram or BPE tokenization algorithms
+Attention Mechanisms:
+The attention mechanism enables the decoder to use the most relevant parts of the input sequence weighted by the encoded input sequence, with the most relevant tokens being assigned the highest weight; This concept improves the scaling of input sequence lengths by carefully selecting ‌tokens by importance
+Self-attention mechanisms create representations of the input sequence relying on the relationship between different words in the same sequence
+Self-attention is called scaled-dot product attention because of how it achieves context-aware input representation
+Each token in the input sequence is used to project itself into Query (Q), Key (K), and Value (V) sequences using their respective weight matrices. The goal is to compute an attention-weighted version of each input token given all the other input tokens as its context
+FlashAttention:
+Transformers of a larger size are limited by the memory requirements of the attention layer, which increases in proportion to the length of the sequence. This growth is quadratic.
+FlashAttention uses classical tiling to load blocks of query, key, and value from GPU HBM (its main memory) to SRAM (its fast cache) for attention computation, and then writes back the output to HBM. It also improves upon memory usage
+Multi Query-Attention:
+A variant of attention where multiple heads of query attend to the same head of key and value projections. This reduces the KV cache size and hence the memory bandwidth requirements of incremental decoding
+Group Query-Attention:
+Group-query attention (GQA) is an improvement over MQA to overcome quality degradation issues while retaining the speed-up at inference time. Moreover, models trained using multi-head attention don’t have to be retrained from scratch. They can employ GQA during inference by up-training existing model checkpoints using only 5% of the original training compute
+Embedding Techniques:
+The original transformer architecture combines absolute positional encoding with word embeddings using sinusoidal functions. However, this approach doesn’t allow extrapolation to longer sequences at inference time than those seen during training. Relative position encoding solved this challenge
+Rotary Position Embeddings (RoPE) combines the concepts of absolute and relative position embeddings.
+Attention with Linear Biases (ALiBi) was introduced. This technique does not add positional embeddings to word embeddings; instead, it biases query-key attention scores with a penalty that is proportional to their distance
+Training Transformer Networks:
+Scaling these massively large AI models with billions of parameters and trillions of tokens comes with huge memory capacity requirements
+Model parallelism partitions the model parameters and optimizer states across multiple GPUs so that each GPU stores a subset of the model parameters
+Tensor parallelism splits operations across GPUs, often known as intra-layer parallelism focused on parallelizing computation within an operation such as matrix-matrix multiplication
+Pipeline parallelism splits model layers across GPUs, also known as inter-layer parallelization, focused on splitting the model by layers into chunks
+Selective activation recomputation goes hand-in-hand with sequence parallelism. It improves cases where memory constraints force the recomputation of some, but not all, of the activations
+fully sharded data parallelism (FSDP) technique. It shards model parameters and training data uniformly across data parallel workers
+Quantization Aware Training:
+Quantization is the process in which deep learning models perform all or part of the computation in reduced precision as compared to full precision (floating point) values
+This technique enables inference speedups, memory savings, and cost reduction of using deep learning models with minimal accuracy loss
+Quantization Aware Training (QAT) is a method that takes into account the impact of quantization during the training process.
