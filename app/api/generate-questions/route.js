@@ -3,11 +3,13 @@ export const dynamic = 'force-dynamic';
 function buildSystemPrompt() {
   return (
     'You are an expert exam item writer for the NVIDIA-Certified Professional: Gen AI LLMs exam. ' +
-    'Generate high-quality practice questions that are specific, technically accurate, and varied (mix short-answer, conceptual, scenario-based, and multiple-choice). ' +
-    'Incorporate the provided subtopics and personal notes to tailor the content. ' +
-    'Return ONLY valid JSON with the following shape: ' +
-    '{"questions":[{"type":"short|mcq|scenario","question":"string","choices":["A","B","C","D"],"answer":"string","explanation":"string"}]}. ' +
-    'For non-MCQ, omit the choices field. Provide 6-10 questions total.'
+    'Generate only multiple-choice questions (MCQ). Each question must have EXACTLY 4 choices and one correct answer. ' +
+    'Use the provided subtopics and personal notes to make the questions targeted and technically accurate. ' +
+    'Write clear stems and ensure only one unambiguously correct option; make the 3 distractors plausible but wrong. ' +
+    'Explanations should be concise (1–3 sentences) and cite the key concept or mechanism that makes the correct option right. ' +
+    'Return ONLY valid JSON with this exact shape (no extra text): ' +
+    '{"questions":[{"question":"string","choices":["A","B","C","D"],"correctIndex":0,"explanation":"string"}]}. ' +
+    'The correctIndex is an integer from 0 to 3 that points to the correct choice. Provide 6-10 questions total.'
   );
 }
 
@@ -19,7 +21,7 @@ function buildUserPrompt({ topicTitle, subtopics, notes }) {
     `Topic: ${topicTitle}\n` +
     `Subtopics:\n${sub}\n\n` +
     (notesStr ? `Learner notes:\n${notesStr}\n\n` : '') +
-    'Generate questions now.'
+    'Generate MCQs now.'
   );
 }
 
@@ -66,9 +68,24 @@ export async function POST(req) {
     } catch {
       parsed = { questions: [] };
     }
-    // Trim to requested count
-    if (Array.isArray(parsed.questions) && count) parsed.questions = parsed.questions.slice(0, count);
-    return new Response(JSON.stringify(parsed), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    // Normalize to MCQ-only shape
+    let questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+    questions = questions.map((q) => {
+      const question = String(q.question || '').trim();
+      const choices = Array.isArray(q.choices) ? q.choices.map((c) => String(c || '')) : [];
+      let correctIndex = Number.isInteger(q.correctIndex) ? q.correctIndex : -1;
+      if (correctIndex < 0 && typeof q.answer === 'string' && choices.length > 0) {
+        const idx = choices.findIndex((c) => c.trim() === String(q.answer || '').trim());
+        correctIndex = idx >= 0 ? idx : -1;
+      }
+      if (correctIndex < 0 && choices.length === 4 && typeof q.answer === 'number') {
+        correctIndex = q.answer;
+      }
+      const explanation = String(q.explanation || '').trim();
+      return { question, choices, correctIndex, explanation };
+    }).filter((q) => q.question && Array.isArray(q.choices) && q.choices.length === 4 && q.correctIndex >= 0 && q.correctIndex < 4);
+    if (count) questions = questions.slice(0, count);
+    return new Response(JSON.stringify({ questions }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   } catch (e) {
     return new Response(JSON.stringify({ error: 'Server error' }), { status: 500 });
   }

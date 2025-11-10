@@ -17,7 +17,7 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
 
   function sanitizeHtml(html) {
     // Basic sanitizer to normalize pasted content and strip unwanted markup
-    const allowed = new Set(['A','B','STRONG','I','EM','U','S','P','BR','UL','OL','LI','BLOCKQUOTE','PRE','CODE','H1','H2','H3']);
+    const allowed = new Set(['A','B','STRONG','I','EM','U','S','P','BR','UL','OL','LI','BLOCKQUOTE','PRE','CODE','H1','H2','H3','MARK']);
     const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
     const root = doc.body.firstChild;
     // Convert <table> elements to bullet lists to avoid layout issues from wide tables
@@ -51,6 +51,16 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
           node.replaceWith(p);
           node = p;
         }
+        // Convert <span style="background..."> to semantic <mark>
+        if (node.tagName === 'SPAN') {
+          const style = node.getAttribute('style') || '';
+          if (/background(-color)?\s*:/i.test(style)) {
+            const mark = doc.createElement('mark');
+            while (node.firstChild) mark.appendChild(node.firstChild);
+            node.replaceWith(mark);
+            node = mark;
+          }
+        }
         // Remove disallowed elements but keep their children
         if (!allowed.has(node.tagName)) {
           const frag = doc.createDocumentFragment();
@@ -83,6 +93,44 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
     return wrapper.innerHTML
       .replace(/(\s*<br>\s*){3,}/gi, '<br><br>') // collapse long br runs
       .replace(/&nbsp;/g, ' '); // normalize spaces
+  }
+
+  function toggleHighlight() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) return;
+    const root = editorRef.current;
+    if (!root) return;
+    // If selection intersects any existing <mark>, unwrap all those marks (toggle off)
+    const marks = Array.from(root.querySelectorAll('mark'));
+    const toUnwrap = marks.filter((m) => {
+      try { return range.intersectsNode(m); } catch { return false; }
+    });
+    if (toUnwrap.length > 0) {
+      toUnwrap.forEach((m) => {
+        const parent = m.parentNode;
+        if (!parent) return;
+        while (m.firstChild) parent.insertBefore(m.firstChild, m);
+        parent.removeChild(m);
+      });
+      handleInput();
+      return;
+    }
+    // Otherwise, wrap selection in <mark> (toggle on)
+    try {
+      const mark = document.createElement('mark');
+      range.surroundContents(mark);
+      sel.removeAllRanges();
+      const newRange = document.createRange();
+      newRange.selectNodeContents(mark);
+      sel.addRange(newRange);
+      handleInput();
+    } catch {
+      // Fallback to browser highlight command
+      exec('hiliteColor', '#fff59d');
+      handleInput();
+    }
   }
 
   function exec(cmd, arg) {
@@ -143,8 +191,8 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
         <button className="rte-button" type="button" title="Heading 2" onClick={() => exec('formatBlock', 'H2')}>H2</button>
         <button className="rte-button" type="button" title="Heading 3" onClick={() => exec('formatBlock', 'H3')}>H3</button>
         <span className="rte-sep" />
-        <button className="rte-button" type="button" title="Code block" onClick={() => exec('formatBlock', 'PRE')}>{'{ }'}</button>
-        <button className="rte-button" type="button" title="Highlight" onClick={() => exec('hiliteColor', '#fff59d')}>HL</button>
+          <button className="rte-button" type="button" title="Code block" onClick={() => exec('formatBlock', 'PRE')}>{'{ }'}</button>
+          <button className="rte-button" type="button" title="Highlight" onClick={toggleHighlight}>HL</button>
         <button className="rte-button" type="button" title="Left" onClick={() => exec('justifyLeft')}>⟸</button>
         <button className="rte-button" type="button" title="Center" onClick={() => exec('justifyCenter')}>⇔</button>
         <button className="rte-button" type="button" title="Right" onClick={() => exec('justifyRight')}>⟹</button>

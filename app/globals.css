@@ -84,6 +84,20 @@ body {
 .question-item { margin: 6px 0; }
 .ai-questions .question-item { margin: 10px 0; }
 
+/* MCQ layout */
+.mcq-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: #fff; }
+.mcq-stem { font-weight: 600; margin-bottom: 8px; }
+.mcq-options { display: grid; gap: 8px; }
+.mcq-option { text-align: left; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 10px; cursor: pointer; font-size: 14px; }
+.mcq-option:hover { border-color: #cfd5df; background: #fafafa; }
+.mcq-option.selected { background: #f5f7fb; border-color: #b6c2ff; }
+.mcq-option.correct { background: #e8fbe8; border-color: #86efac; }
+.mcq-option.wrong { background: #fde8e8; border-color: #fca5a5; }
+.mcq-actions { margin-top: 8px; display: flex; align-items: center; gap: 10px; }
+.mcq-result.ok { color: #166534; font-weight: 600; }
+.mcq-result.bad { color: #991b1b; font-weight: 600; }
+.mcq-expl { margin-top: 6px; color: #374151; }
+
 /* Rich text editor */
 .rte { border: 1px solid var(--border); border-radius: 10px; background: #fff; }
 .rte-toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border-bottom: 1px solid var(--border); background: #fafafa; border-top-left-radius: 10px; border-top-right-radius: 10px; }
@@ -99,6 +113,7 @@ body {
 .rte-editor h1, .rte-editor h2, .rte-editor h3 { margin: 12px 0 6px; line-height: 1.25; }
 .rte-editor blockquote { margin: 8px 0; padding-left: 10px; border-left: 3px solid var(--border); color: #374151; }
 .rte-editor pre { background: #f7f7f8; padding: 8px; border-radius: 8px; overflow: auto; }
+.rte-editor mark { background: #fff59d; padding: 0 0.05em; border-radius: 2px; }
 .subtopics .reading-notes { max-height: 420px; overflow: auto; }
 
 /* Modal */

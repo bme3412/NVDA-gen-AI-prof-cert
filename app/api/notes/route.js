@@ -38,7 +38,8 @@ export async function PUT(req) {
     }
     const body = await req.text();
     await put(PATHNAME, body, {
-      access: 'private',
+      // Blob tokens currently require public access for writes/reads
+      access: 'public',
       addRandomSuffix: false,
       token,
       contentType: 'application/json',
@@ -48,7 +49,9 @@ export async function PUT(req) {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false }), {
+    // Surface error message to help diagnose token/scope issues (dev-friendly)
+    const msg = (e && e.message) ? String(e.message) : 'upload_failed';
+    return new Response(JSON.stringify({ ok: false, error: msg }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

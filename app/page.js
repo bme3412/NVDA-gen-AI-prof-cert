@@ -14,6 +14,7 @@ export default function Page() {
   const savingStatusRef = useRef({}); // topicId -> 'idle' | 'saving' | 'saved'
   const debouncersRef = useRef({}); // topicId -> debounced function
   const cloudDebouncerRef = useRef(null); // global debouncer for cloud sync
+  const cloudEnabledRef = useRef(true); // disable cloud sync if server not configured
 
   // Load from localStorage on mount (client), then enable persistence
   useEffect(() => {
@@ -32,6 +33,23 @@ export default function Page() {
             if (remoteCount > localCount) {
               setData(remote);
               saveToLocalStorage(remote);
+              return;
+            }
+          }
+        } else if (r.status === 204) {
+          cloudEnabledRef.current = false; // no cloud configured
+        }
+      } catch {}
+      // If still empty after cloud attempt, try static seed file committed to repo
+      try {
+        const hasLocal = Object.keys(loaded.topics || {}).length > 0;
+        if (!hasLocal) {
+          const seedResp = await fetch('/notes-seed.json', { cache: 'no-store' });
+          if (seedResp.ok) {
+            const seed = await seedResp.json();
+            if (seed && seed.topics && typeof seed.topics === 'object' && Object.keys(seed.topics).length > 0) {
+              setData(seed);
+              saveToLocalStorage(seed);
             }
           }
         }
@@ -48,12 +66,17 @@ export default function Page() {
       cloudDebouncerRef.current = createDebounced(2500);
     }
     cloudDebouncerRef.current(async () => {
+      if (!cloudEnabledRef.current) return;
       try {
-        await fetch('/api/notes', {
+        const resp = await fetch('/api/notes', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(Object.assign({}, data, { lastExport: nowTs() })),
         });
+        if (!resp.ok) {
+          // Disable further attempts this session to avoid log spam
+          cloudEnabledRef.current = false;
+        }
       } catch {}
     });
   }, [data, hasLoaded]);

@@ -22,6 +22,8 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
   const [openSubtopicIdx, setOpenSubtopicIdx] = useState(null);
   const [subtopicSaveState, setSubtopicSaveState] = useState({}); // keys: `sum-idx` or `guide-idx`
   const subtopicDebouncersRef = useRef({});
+  const [mcqSelected, setMcqSelected] = useState({}); // i -> selectedIndex
+  const [mcqChecked, setMcqChecked] = useState({}); // i -> true
 
   function plainTextLength(html) {
     if (!html) return 0;
@@ -322,7 +324,7 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
                     topicTitle: topic.title,
                     subtopics: topic.subtopics || [],
                     notes: aggregatedNotes,
-                    count: 8,
+                    count: 12,
                   }),
                 });
                 if (res.ok) {
@@ -331,6 +333,8 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
                   if (q.length > 0) {
                     setAiQuestions(q);
                     setQuestions([]);
+                    setMcqSelected({});
+                    setMcqChecked({});
                   } else {
                     // Fallback to local if AI returned no questions
                     setAiQuestions([]);
@@ -358,24 +362,62 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
         {!qCollapsed && (aiQuestions.length > 0 ? (
           <div className="ai-questions" style={{ marginTop: 10 }}>
             <ul className="question-list">
-              {aiQuestions.map((q, i) => (
-                <li key={i} className="question-item">
-                  <div><strong>[{q.type?.toUpperCase?.() || 'Q'}]</strong> {q.question}</div>
-                  {Array.isArray(q.choices) && q.choices.length > 0 && (
-                    <ul style={{ marginTop: 6, paddingLeft: 18 }}>
-                      {q.choices.map((c, j) => (
-                        <li key={j}>{c}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {showAnswers && (q.answer || q.explanation) && (
-                    <div className="progress-text" style={{ marginTop: 6 }}>
-                      {q.answer ? (<div><strong>Answer:</strong> {q.answer}</div>) : null}
-                      {q.explanation ? (<div><strong>Why:</strong> {q.explanation}</div>) : null}
+              {aiQuestions.map((q, i) => {
+                const selected = mcqSelected[i];
+                const checked = mcqChecked[i] === true;
+                const correct = Number.isInteger(q.correctIndex) ? q.correctIndex : -1;
+                return (
+                  <li key={i} className="question-item mcq-card">
+                    <div className="mcq-stem"><strong>Q{i + 1}.</strong> {q.question}</div>
+                    <div className="mcq-options">
+                      {(q.choices || []).map((c, j) => {
+                        const isSelected = selected === j;
+                        const isCorrect = checked && j === correct;
+                        const isWrong = checked && isSelected && j !== correct;
+                        const cls =
+                          'mcq-option' +
+                          (isCorrect ? ' correct' : '') +
+                          (isWrong ? ' wrong' : '') +
+                          (!isCorrect && !isWrong && isSelected ? ' selected' : '');
+                        return (
+                          <button
+                            key={j}
+                            type="button"
+                            className={cls}
+                            onClick={() => setMcqSelected((prev) => ({ ...prev, [i]: j }))}
+                          >
+                            {String.fromCharCode(65 + j)}. {c}
+                          </button>
+                        );
+                      })}
                     </div>
-                  )}
-                </li>
-              ))}
+                    <div className="mcq-actions">
+                      <button
+                        className="btn"
+                        onClick={() => setMcqChecked((prev) => ({ ...prev, [i]: true }))}
+                        disabled={checked || typeof selected !== 'number'}
+                      >
+                        {checked ? 'Checked' : 'Check'}
+                      </button>
+                      {checked && correct >= 0 && (
+                        <span className={'mcq-result ' + (selected === correct ? 'ok' : 'bad')}>
+                          {selected === correct ? 'Correct!' : `Incorrect. Correct answer: ${String.fromCharCode(65 + correct)}.`}
+                        </span>
+                      )}
+                    </div>
+                    {checked && q.explanation ? (
+                      <div className="mcq-expl">
+                        <strong>Why:</strong> <span>{q.explanation}</span>
+                      </div>
+                    ) : null}
+                    {showAnswers && correct >= 0 && (
+                      <div className="mcq-expl">
+                        <strong>Answer:</strong> {String.fromCharCode(65 + correct)}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ) : (questions.length > 0 && (
