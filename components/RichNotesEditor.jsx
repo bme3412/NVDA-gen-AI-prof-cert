@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 
 export default function RichNotesEditor({ value, onChange, placeholder = 'Type your notes here...' }) {
   const editorRef = useRef(null);
+  const savedRangeRef = useRef(null); // remembers last selection inside editor
 
   useEffect(() => {
     // Sync external value into editor if it differs
@@ -15,9 +16,33 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
     }
   }, [value]);
 
+  // Track selection so toolbar actions can restore it after focus changes
+  useEffect(() => {
+    function captureSelection() {
+      const el = editorRef.current;
+      const sel = window.getSelection();
+      if (!el || !sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      if (el.contains(range?.startContainer)) {
+        savedRangeRef.current = range.cloneRange();
+        // saved selection
+      }
+    }
+    document.addEventListener('selectionchange', captureSelection);
+    return () => document.removeEventListener('selectionchange', captureSelection);
+  }, []);
+
+  function restoreSelection() {
+    const r = savedRangeRef.current;
+    if (!r) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
   function sanitizeHtml(html) {
     // Basic sanitizer to normalize pasted content and strip unwanted markup
-    const allowed = new Set(['A','B','STRONG','I','EM','U','S','P','BR','UL','OL','LI','BLOCKQUOTE','PRE','CODE','H1','H2','H3','MARK']);
+    const allowed = new Set(['A','STRONG','P','BR','UL','OL','LI','BLOCKQUOTE','PRE','CODE','H1','H2','H3','H4','H5','H6','MARK']);
     const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
     const root = doc.body.firstChild;
     // Convert <table> elements to bullet lists to avoid layout issues from wide tables
@@ -51,7 +76,7 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
           node.replaceWith(p);
           node = p;
         }
-        // Convert <span style="background..."> to semantic <mark>
+        // Convert <span style="background..."> to semantic <mark> so highlight persists
         if (node.tagName === 'SPAN') {
           const style = node.getAttribute('style') || '';
           if (/background(-color)?\s*:/i.test(style)) {
@@ -68,7 +93,7 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
           node.replaceWith(frag);
           return;
         }
-        // Strip style/class/id and other presentational attrs
+        // Strip style/class/id and other presentational attrs (keep href on A)
         Array.from(node.attributes).forEach((attr) => {
           const name = attr.name.toLowerCase();
           if (node.tagName === 'A' && name === 'href') {
@@ -78,7 +103,7 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
           } else if (name === 'href') {
             // only A is allowed to have href
             node.removeAttribute(name);
-          } else if (name !== 'href') {
+          } else {
             node.removeAttribute(name);
           }
         });
@@ -102,7 +127,7 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
     if (range.collapsed) return;
     const root = editorRef.current;
     if (!root) return;
-    // If selection intersects any existing <mark>, unwrap all those marks (toggle off)
+    // If selection intersects any existing <mark>, unwrap them (toggle off)
     const marks = Array.from(root.querySelectorAll('mark'));
     const toUnwrap = marks.filter((m) => {
       try { return range.intersectsNode(m); } catch { return false; }
@@ -117,7 +142,7 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
       handleInput();
       return;
     }
-    // Otherwise, wrap selection in <mark> (toggle on)
+    // Otherwise, wrap selection in <mark>
     try {
       const mark = document.createElement('mark');
       range.surroundContents(mark);
@@ -127,7 +152,7 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
       sel.addRange(newRange);
       handleInput();
     } catch {
-      // Fallback to browser highlight command
+      // Fallback to browser command
       exec('hiliteColor', '#fff59d');
       handleInput();
     }
@@ -136,6 +161,30 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
   function exec(cmd, arg) {
     document.execCommand(cmd, false, arg);
     editorRef.current?.focus();
+  }
+
+  function insertWrappedSelection(styleStr) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return false;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) return false;
+    // Prefer native surroundContents to avoid extra whitespace
+    try {
+      const span = document.createElement('span');
+      if (styleStr) span.setAttribute('style', styleStr);
+      range.surroundContents(span);
+    } catch {
+      // Fallback to HTML insertion
+      const frag = range.cloneContents();
+      const container = document.createElement('div');
+      const span = document.createElement('span');
+      if (styleStr) span.setAttribute('style', styleStr);
+      span.appendChild(frag);
+      container.appendChild(span);
+      document.execCommand('insertHTML', false, container.innerHTML);
+    }
+    handleInput();
+    return true;
   }
 
   function handleInput() {
@@ -171,7 +220,10 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
   }
 
   function preventBlur(e) {
-    // Keep focus on editor when clicking toolbar
+    // Keep focus on editor when clicking toolbar buttons,
+    // but allow <select> to open
+    const tag = String(e.target?.tagName || '').toUpperCase();
+    if (tag === 'SELECT' || tag === 'INPUT') return;
     e.preventDefault();
   }
 
@@ -179,34 +231,16 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
     <div className="rte">
       <div className="rte-toolbar" onMouseDown={preventBlur}>
         <button className="rte-button" type="button" title="Bold" onClick={() => exec('bold')}>B</button>
-        <button className="rte-button" type="button" title="Italic" onClick={() => exec('italic')}><em>I</em></button>
-        <button className="rte-button" type="button" title="Underline" onClick={() => exec('underline')}><u>U</u></button>
-        <button className="rte-button" type="button" title="Strikethrough" onClick={() => exec('strikeThrough')}>S</button>
-        <span className="rte-sep" />
-        <button className="rte-button" type="button" title="Bulleted list" onClick={() => exec('insertUnorderedList')}>• List</button>
-        <button className="rte-button" type="button" title="Numbered list" onClick={() => exec('insertOrderedList')}>1. List</button>
-        <button className="rte-button" type="button" title="Quote" onClick={() => exec('formatBlock', 'BLOCKQUOTE')}>❝</button>
         <span className="rte-sep" />
         <button className="rte-button" type="button" title="Heading 1" onClick={() => exec('formatBlock', 'H1')}>H1</button>
         <button className="rte-button" type="button" title="Heading 2" onClick={() => exec('formatBlock', 'H2')}>H2</button>
         <button className="rte-button" type="button" title="Heading 3" onClick={() => exec('formatBlock', 'H3')}>H3</button>
+          <button className="rte-button" type="button" title="Heading 4" onClick={() => exec('formatBlock', 'H4')}>H4</button>
+          <button className="rte-button" type="button" title="Heading 5" onClick={() => exec('formatBlock', 'H5')}>H5</button>
+          <button className="rte-button" type="button" title="Heading 6" onClick={() => exec('formatBlock', 'H6')}>H6</button>
+          <button className="rte-button" type="button" title="Normal paragraph" onClick={() => exec('formatBlock', 'P')}>Normal</button>
         <span className="rte-sep" />
-          <button className="rte-button" type="button" title="Code block" onClick={() => exec('formatBlock', 'PRE')}>{'{ }'}</button>
-          <button className="rte-button" type="button" title="Highlight" onClick={toggleHighlight}>HL</button>
-        <button className="rte-button" type="button" title="Left" onClick={() => exec('justifyLeft')}>⟸</button>
-        <button className="rte-button" type="button" title="Center" onClick={() => exec('justifyCenter')}>⇔</button>
-        <button className="rte-button" type="button" title="Right" onClick={() => exec('justifyRight')}>⟹</button>
-        <span className="rte-sep" />
-        <button className="rte-button" type="button" title="Link" onClick={() => {
-          const url = prompt('Enter URL');
-          if (url) exec('createLink', url);
-        }}>🔗</button>
-        <button className="rte-button" type="button" title="Remove link" onClick={() => exec('unlink')}>✖︎</button>
-        <span className="rte-sep" />
-        <button className="rte-button" type="button" title="Undo" onClick={() => exec('undo')}>↶</button>
-        <button className="rte-button" type="button" title="Redo" onClick={() => exec('redo')}>↷</button>
-        <span className="rte-sep" />
-        <button className="rte-button" type="button" title="Clear formatting" onClick={() => exec('removeFormat')}>Clear</button>
+        <button className="rte-button" type="button" title="Highlight" onClick={toggleHighlight}>HL</button>
       </div>
       <div
         className="rte-editor textarea"
