@@ -10,7 +10,6 @@ export default function Page() {
   const [hasLoaded, setHasLoaded] = useState(false);
   const [activeTopicId, setActiveTopicId] = useState(() => (examTopics[0] ? examTopics[0].id : null));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const fileInputRef = useRef(null);
   const savingStatusRef = useRef({}); // topicId -> 'idle' | 'saving' | 'saved'
   const debouncersRef = useRef({}); // topicId -> debounced function
   const cloudDebouncerRef = useRef(null); // global debouncer for cloud sync
@@ -160,6 +159,7 @@ export default function Page() {
       if (!next.topics[key]) next.topics[key] = { readingsComplete: [], notes: '', lastModified: null };
       updater(next.topics[key]);
       next.topics[key].lastModified = nowTs();
+      next.lastExport = nowTs();
       return next;
     });
   }
@@ -232,59 +232,6 @@ export default function Page() {
     });
   }
 
-  // Removed Import/Export functionality per requirements
-
-  function clearAllData() {
-    const ok = window.confirm('Clear all saved progress and notes? This cannot be undone.');
-    if (!ok) return;
-    const empty = { topics: {}, lastExport: null };
-    setData(empty);
-    saveToLocalStorage(empty);
-  }
-
-  function exportAll() {
-    try {
-      const payload = JSON.stringify(data, null, 2);
-      const blob = new Blob([payload], { type: 'application/json' });
-      const a = document.createElement('a');
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      a.href = URL.createObjectURL(blob);
-      a.download = `nvda-llm-study-notes-${ts}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
-    } catch (_) {
-      alert('Export failed.');
-    }
-  }
-
-  function openImport() {
-    fileInputRef.current?.click();
-  }
-
-  function handleImportFile(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = JSON.parse(String(reader.result || '{}'));
-        if (!parsed || typeof parsed !== 'object' || typeof parsed.topics !== 'object') {
-          alert('Invalid file format.');
-          return;
-        }
-        setData(parsed);
-        saveToLocalStorage(parsed);
-        alert('Import successful.');
-      } catch {
-        alert('Failed to parse file.');
-      }
-    };
-    reader.readAsText(file);
-  }
-
   const appClass = sidebarCollapsed ? 'app sidebar-collapsed' : 'app';
 
   if (!hasLoaded) {
@@ -299,13 +246,9 @@ export default function Page() {
         activeTopicId={activeTopicId}
         setActiveTopicId={setActiveTopicId}
         isTopicComplete={isTopicComplete}
-        onClear={clearAllData}
-        onExport={exportAll}
-        onImport={openImport}
         sidebarCollapsed={sidebarCollapsed}
         setSidebarCollapsed={setSidebarCollapsed}
       />
-      <input type="file" ref={fileInputRef} accept="application/json" style={{ display: 'none' }} onChange={handleImportFile} />
       <MainContent
         topics={examTopics}
         activeTopicId={activeTopicId}

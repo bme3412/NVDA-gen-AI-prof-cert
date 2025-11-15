@@ -7,9 +7,6 @@ export default function Sidebar({
   activeTopicId,
   setActiveTopicId,
   isTopicComplete,
-  onClear,
-  onExport,
-  onImport,
   sidebarCollapsed,
   setSidebarCollapsed,
 }) {
@@ -48,15 +45,6 @@ export default function Sidebar({
           <div className="progress-text">
             {`${progress.complete}/${progress.total} topics complete (${progress.percent}%)`}
           </div>
-        </div>
-      </div>
-
-      <div className="sidebar-section">
-        <div className="sidebar-section-label">Workspace tools</div>
-        <div className="sidebar-controls">
-          <button className="btn danger" onClick={onClear}>Clear</button>
-          <button className="btn" onClick={onExport} title="Download your notes as JSON">Export</button>
-          <button className="btn" onClick={onImport} title="Import notes from JSON">Import</button>
         </div>
       </div>
 
