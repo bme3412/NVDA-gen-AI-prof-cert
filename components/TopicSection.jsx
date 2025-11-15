@@ -1,20 +1,18 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { generateQuestionsFromSubtopics } from '../lib/questions';
 import RichNotesEditor from './RichNotesEditor';
+
+const MAX_QUIZ_QUESTIONS = 10;
 
 export default function TopicSection({ topic, getTopicState, toggleReadingComplete, updateNotes, updateReadingNotes, forceSaveNotes, savingStatusRef, updateSubtopicSummary, updateSubtopicStudyGuide }) {
   const { readingsComplete, notes, readingCompletedAt = {}, readingNotes = {}, readingUserNotes = {}, subtopicSummaries = {}, subtopicStudyGuides = {} } = getTopicState(topic.id);
   const savingStatus = (savingStatusRef.current || {})[String(topic.id)] || 'idle';
   const readings = topic.readings || [];
   const allComplete = readings.length > 0 && readingsComplete.length === readings.length;
-  const [questions, setQuestions] = useState([]);
-  const [aiQuestions, setAiQuestions] = useState([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const [openReadingIdx, setOpenReadingIdx] = useState(null);
-  const [qCollapsed, setQCollapsed] = useState(false);
-  const [showAnswers, setShowAnswers] = useState(false);
   const [notesCollapsed, setNotesCollapsed] = useState(false);
   const [openReadingEditorIdx, setOpenReadingEditorIdx] = useState(null);
   const [readingSaveState, setReadingSaveState] = useState({}); // idx -> 'idle'|'saving'|'saved'
@@ -22,8 +20,50 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
   const [openSubtopicIdx, setOpenSubtopicIdx] = useState(null);
   const [subtopicSaveState, setSubtopicSaveState] = useState({}); // keys: `sum-idx` or `guide-idx`
   const subtopicDebouncersRef = useRef({});
-  const [mcqSelected, setMcqSelected] = useState({}); // i -> selectedIndex
-  const [mcqChecked, setMcqChecked] = useState({}); // i -> true
+  const [readingIncluded, setReadingIncluded] = useState({}); // idx -> boolean
+  const [subtopicsIncluded, setSubtopicsIncluded] = useState({}); // idx -> boolean
+  const [quizModalOpen, setQuizModalOpen] = useState(false);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState([]);
+  const [quizIndex, setQuizIndex] = useState(0);
+  const [quizSelections, setQuizSelections] = useState({});
+  const [quizCheckedState, setQuizCheckedState] = useState({});
+  const [quizComplete, setQuizComplete] = useState(false);
+  const [quizShowExplanation, setQuizShowExplanation] = useState(false);
+  const [quizReviewOpen, setQuizReviewOpen] = useState(false);
+
+  // Initialize reading include selections to all false (once)
+  useEffect(() => {
+    if (!Array.isArray(readings)) return;
+    const keys = Object.keys(readingIncluded);
+    if (keys.length === 0 && readings.length > 0) {
+      const none = {};
+      readings.forEach((_, idx) => { none[idx] = false; });
+      setReadingIncluded(none);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readings?.length]);
+
+  useEffect(() => {
+    const subs = Array.isArray(topic.subtopics) ? topic.subtopics : [];
+    setSubtopicsIncluded((prev) => {
+      const next = {};
+      let changed = false;
+      subs.forEach((_, idx) => {
+        const val = typeof prev[idx] === 'boolean' ? prev[idx] : false;
+        next[idx] = val;
+        if (prev[idx] !== val) changed = true;
+      });
+      Object.keys(prev || {}).forEach((key) => {
+        const idx = Number(key);
+        if (!Number.isNaN(idx) && idx >= subs.length) {
+          changed = true;
+        }
+      });
+      if (!changed) return prev;
+      return next;
+    });
+  }, [topic.subtopics]);
 
   function plainTextLength(html) {
     if (!html) return 0;
@@ -34,6 +74,220 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
       .replace(/&gt;/g, '>')
       .replace(/&amp;/g, '&');
     return text.length;
+  }
+
+  function decodeHtmlEntities(str) {
+    return String(str || '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&#160;/gi, ' ')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&amp;/gi, '&')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'");
+  }
+
+  function extractNoteLines(html, limit = 2) {
+    if (!html) return [];
+    let text = decodeHtmlEntities(html)
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|ul|ol|h[1-6])>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\r/g, '');
+    text = text
+      .split('\n')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (!text) return [];
+    const segments = text.split('\n').filter(Boolean);
+    const lines = [];
+    for (const segment of segments) {
+      const withBreaks = segment.replace(/([.!?])\s+/g, '$1|');
+      const candidates = withBreaks
+        .split('|')
+        .map((c) => c.trim())
+        .filter(Boolean);
+      const source = candidates.length > 0 ? candidates : [segment.trim()];
+      for (const sentence of source) {
+        if (!sentence) continue;
+        lines.push(sentence);
+        if (lines.length >= limit) return lines;
+      }
+    }
+    return lines;
+  }
+
+  function getIncludedSubtopicIndexes({ strict = false } = {}) {
+    const labels = Array.isArray(topic.subtopics) ? topic.subtopics : [];
+    const selected = labels
+      .map((_, idx) => (subtopicsIncluded[idx] ? idx : null))
+      .filter((idx) => idx !== null);
+    return selected;
+  }
+
+  function buildSubtopicQuestionSeeds(indexes) {
+    const labels = Array.isArray(topic.subtopics) ? topic.subtopics : [];
+    const seeds = [];
+    indexes
+      .filter((n) => Number.isInteger(n) && n >= 0)
+      .sort((a, b) => a - b)
+      .forEach((idx) => {
+        const label = String(labels[idx] || '').trim() || `Subtopic ${idx + 1}`;
+        const summaryLines = extractNoteLines(subtopicSummaries[idx], 2);
+        const guideLines = extractNoteLines(subtopicStudyGuides[idx], 2);
+        const pushSeed = (fact, detailType) => {
+          const trimmed = String(fact || '').trim();
+          if (!trimmed) return;
+          seeds.push({ label, fact: trimmed, detailType });
+        };
+        summaryLines.forEach((line) => pushSeed(line, 'summary'));
+        guideLines.forEach((line) => pushSeed(line, 'guide'));
+        if (summaryLines.length === 0 && guideLines.length === 0) {
+          pushSeed(`Focus on ${label} and how it applies to Gen AI workloads.`, 'label');
+        } else {
+          pushSeed(`Ensure mastery of ${label} so it can be applied during the exam.`, 'label');
+        }
+      });
+    return seeds;
+  }
+
+  function beginQuizGeneration() {
+    setQuizModalOpen(true);
+    setQuizLoading(true);
+    setQuizReviewOpen(false);
+    setQuizQuestions([]);
+    setQuizIndex(0);
+    setQuizSelections({});
+    setQuizCheckedState({});
+    setQuizComplete(false);
+    setQuizShowExplanation(false);
+  }
+
+  function startQuizSession(questionSet) {
+    if (!Array.isArray(questionSet) || questionSet.length === 0) return;
+    setQuizQuestions(questionSet.slice(0, MAX_QUIZ_QUESTIONS));
+    setQuizIndex(0);
+    setQuizSelections({});
+    setQuizCheckedState({});
+    setQuizComplete(false);
+    setQuizShowExplanation(false);
+    setQuizLoading(false);
+    setQuizReviewOpen(false);
+    setQuizModalOpen(true);
+  }
+
+  function runLocalQuestionFallback(seedLines) {
+    const mcqs = generateQuestionsFromSubtopics(seedLines, 10);
+    startQuizSession(mcqs);
+  }
+
+  function handleQuizSelect(optionIdx) {
+    if (quizCheckedState[quizIndex]) return;
+    setQuizSelections((prev) => ({ ...prev, [quizIndex]: optionIdx }));
+  }
+
+  function handleQuizCheck() {
+    const current = quizQuestions[quizIndex];
+    if (!current) return;
+    const selected = quizSelections[quizIndex];
+    if (!Number.isInteger(selected)) return;
+    setQuizCheckedState((prev) => {
+      if (prev[quizIndex]) return prev;
+      const outcome = selected === current.correctIndex ? 'correct' : 'incorrect';
+      setQuizShowExplanation(true);
+      return { ...prev, [quizIndex]: outcome };
+    });
+  }
+
+  function handleQuizNext() {
+    if (quizIndex + 1 < quizQuestions.length) {
+      setQuizIndex((idx) => idx + 1);
+      setQuizShowExplanation(false);
+    } else {
+      setQuizComplete(true);
+      setQuizShowExplanation(false);
+      setQuizReviewOpen(true);
+    }
+  }
+
+  function handleQuizClose() {
+    setQuizModalOpen(false);
+    setQuizLoading(false);
+  }
+
+  function handleQuizRestart() {
+    startQuizSession([...quizQuestions]);
+  }
+
+  function selectAllSubtopics() {
+    setSubtopicsIncluded((prev) => {
+      const next = {};
+      (topic.subtopics || []).forEach((_, idx) => {
+        next[idx] = true;
+      });
+      return Object.keys(prev).length && Object.keys(prev).every((key) => prev[key]) ? prev : next;
+    });
+  }
+
+  function clearSubtopicSelection() {
+    setSubtopicsIncluded((prev) => {
+      const next = {};
+      (topic.subtopics || []).forEach((_, idx) => {
+        next[idx] = false;
+      });
+      return Object.keys(prev).length && Object.values(prev).every((v) => v === false) ? prev : next;
+    });
+  }
+
+  function isSubtopicIncluded(idx) {
+    if (typeof subtopicsIncluded[idx] === 'boolean') return subtopicsIncluded[idx];
+    return true;
+  }
+
+  function buildAggregatedNotes(selectedIndexes) {
+    const parts = [];
+    if (notes && String(notes).trim()) {
+      parts.push('== Topic Notes ==\n' + String(notes).trim());
+    }
+    const subtopics = Array.isArray(topic.subtopics) ? topic.subtopics : [];
+    const subSections = [];
+    selectedIndexes.forEach((idx) => {
+      const label = subtopics[idx];
+      const sum = subtopicSummaries[idx] || '';
+      const guide = subtopicStudyGuides[idx] || '';
+      if ((sum && String(sum).trim()) || (guide && String(guide).trim())) {
+        const lines = [];
+        lines.push(`-- ${label || `Subtopic ${idx + 1}`} --`);
+        if (sum && String(sum).trim()) lines.push('Summary:\n' + String(sum).trim());
+        if (guide && String(guide).trim()) lines.push('Study Guide:\n' + String(guide).trim());
+        subSections.push(lines.join('\n'));
+      }
+    });
+    if (subSections.length > 0) {
+      parts.push('== Subtopic Notes ==\n' + subSections.join('\n\n'));
+    }
+    const readingSections = [];
+    (topic.readings || []).forEach((r, idx) => {
+      const includeThis = !!readingIncluded[idx];
+      if (!includeThis) return;
+      const userNote = readingUserNotes[idx] || '';
+      const snap = readingNotes[idx] || '';
+      const chosen = (userNote && String(userNote).trim())
+        ? String(userNote).trim()
+        : (snap && String(snap).trim())
+        ? String(snap).trim()
+        : '';
+      if (chosen) {
+        readingSections.push(`-- ${r.title} --\n` + chosen);
+      }
+    });
+    if (readingSections.length > 0) {
+      parts.push('== Reading Notes ==\n' + readingSections.join('\n\n'));
+    }
+    return parts.join('\n\n').trim();
   }
 
   function formatDate(ts) {
@@ -76,6 +330,30 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
     setSubtopicSaveState((prev) => ({ ...prev, [key]: status }));
   }
 
+  const selectedSubtopicIndexes = getIncludedSubtopicIndexes();
+  const selectedSubtopicCount = selectedSubtopicIndexes.length;
+  const currentQuizQuestion = quizQuestions[quizIndex] || null;
+  const currentQuizSelection = quizSelections[quizIndex];
+  const currentQuizStatus = quizCheckedState[quizIndex];
+  const currentQuizChecked = Boolean(currentQuizStatus);
+  const currentQuizCorrect = currentQuizStatus === 'correct';
+  const quizTotalQuestions = quizQuestions.length || MAX_QUIZ_QUESTIONS;
+  const quizAnsweredCount = Object.keys(quizCheckedState).length;
+  const quizProgressPct = quizTotalQuestions > 0 ? Math.round((quizAnsweredCount / quizTotalQuestions) * 100) : 0;
+  const quizScore = Object.values(quizCheckedState).filter((v) => v === 'correct').length;
+
+  function choiceLabel(idx) {
+    return String.fromCharCode(65 + idx);
+  }
+
+  function quizPrimaryButtonStyle(disabled) {
+    return {
+      background: disabled ? '#94a3b8' : '#2563eb',
+      borderColor: disabled ? '#94a3b8' : '#2563eb',
+      color: '#fff',
+    };
+  }
+
   return (
     <section className="topic-section" id={`topic-${topic.id}`} data-topicid={String(topic.id)}>
       <div className="topic-header">
@@ -84,29 +362,59 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
       </div>
 
       <div className="subtopics">
-        <strong>Subtopics</strong>
-        <ul>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+          <div>
+            <strong>Select Topics & Build a Quiz</strong>
+            <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>Toggle 🎯 to include subtopics. Add readings below, then hit Generate.</div>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn ghost" onClick={selectAllSubtopics}>Select All</button>
+            <button className="btn ghost" onClick={clearSubtopicSelection}>Clear</button>
+          </div>
+        </div>
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {(topic.subtopics || []).map((s, i) => (
-            <li key={i} id={`subtopic-${topic.id}-${i}`}>
+            <li
+              key={i}
+              id={`subtopic-${topic.id}-${i}`}
+              style={{
+                background: i % 2 === 0 ? '#f8fafc' : '#fff',
+                borderRadius: 10,
+                padding: '8px 10px',
+                marginBottom: 4,
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span>{s}</span>
-                <button
-                  className="icon-btn"
-                  title="Open LLM notes editors for this subtopic"
-                  onClick={() => {
-                    setOpenSubtopicIdx((cur) => {
-                      const next = cur === i ? null : i;
-                      // After state update, scroll the opened subtopic into view to avoid awkward layout jumps
-                      setTimeout(() => {
-                        if (next !== null) {
-                          const el = document.getElementById(`subtopic-${topic.id}-${i}`);
-                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }
-                      }, 0);
-                      return next;
-                    });
-                  }}
-                >🧠</button>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                  <button
+                    className="icon-btn"
+                    style={{ background: isSubtopicIncluded(i) ? '#e6f5cf' : '#fff' }}
+                    title={isSubtopicIncluded(i) ? 'Included in quiz generation' : 'Click to include in quiz generation'}
+                    onClick={() =>
+                      setSubtopicsIncluded((prev) => ({
+                        ...prev,
+                        [i]: !isSubtopicIncluded(i),
+                      }))
+                    }
+                  >🎯</button>
+                  <button
+                    className="icon-btn"
+                    title="Open LLM notes editors for this subtopic"
+                    onClick={() => {
+                      setOpenSubtopicIdx((cur) => {
+                        const next = cur === i ? null : i;
+                        setTimeout(() => {
+                          if (next !== null) {
+                            const el = document.getElementById(`subtopic-${topic.id}-${i}`);
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }
+                        }, 0);
+                        return next;
+                      });
+                    }}
+                  >🧠</button>
+                </div>
               </div>
               {openSubtopicIdx === i && (
                 <div className="reading-notes" style={{ marginTop: 6 }}>
@@ -169,7 +477,10 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
       </div>
 
       <div className="readings">
-        <h4>Suggested readings</h4>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <h4 style={{ margin: 0 }}>Readings</h4>
+          <div style={{ fontSize: 13, color: '#475569' }}>Toggle 🎯 to pull notes into the quiz.</div>
+        </div>
         {readings.length === 0 ? (
           <div className="progress-text">No readings provided.</div>
         ) : (
@@ -195,6 +506,12 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
               >
                 {r.title}
               </a>
+              <button
+                className="icon-btn"
+                style={{ marginLeft: 6, background: readingIncluded[idx] ? '#e6f5cf' : '#fff' }}
+                title={readingIncluded[idx] ? 'Included in Generate Questions' : 'Click to include in Generate Questions'}
+                onClick={() => setReadingIncluded((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+              >🎯</button>
               {readingCompletedAt[idx] ? (
                 <span className="reading-meta">Completed: {formatDate(readingCompletedAt[idx])}
                   {readingNotes[idx] ? (
@@ -253,180 +570,77 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
       )}
 
       <div className="questions">
-        <div className="notes-header" style={{ marginTop: 8 }}>
-          <strong>Practice Questions</strong>
-          <div>
-            <button className="btn" style={{ marginRight: 6 }} onClick={() => setShowAnswers((v) => !v)}>
-              {showAnswers ? 'Hide Answers' : 'Show Answers'}
-            </button>
-            <button className="btn" onClick={() => setQCollapsed((v) => !v)}>
-              {qCollapsed ? 'Expand' : 'Minimize'}
-            </button>
+        {quizQuestions.length > 0 && !quizModalOpen ? (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+            <button className="btn" onClick={() => setQuizModalOpen(true)}>Open Quiz</button>
           </div>
-        </div>
-        {!qCollapsed && (
-        <div style={{ marginTop: 8 }}>
+        ) : null}
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <button
             className="btn primary"
             disabled={aiLoading}
             onClick={async () => {
               setAiError('');
               setAiLoading(true);
+              const selectedIndexes = getIncludedSubtopicIndexes({ strict: true });
+              if (selectedIndexes.length === 0) {
+                setAiError('Select at least one subtopic to generate questions.');
+                setAiLoading(false);
+                return;
+              }
+              const localSeeds = buildSubtopicQuestionSeeds(selectedIndexes);
+              if (localSeeds.length === 0) {
+                setAiError('Need more notes or summaries for the selected subtopics.');
+                setQuizModalOpen(false);
+                setQuizLoading(false);
+                setAiLoading(false);
+                return;
+              }
+              beginQuizGeneration();
               try {
-                // Aggregate notes from topic, subtopics, and readings
-                function buildAggregatedNotes() {
-                  const parts = [];
-                  if (notes && String(notes).trim()) {
-                    parts.push('== Topic Notes ==\n' + String(notes).trim());
-                  }
-                  // Subtopic summaries and study guides
-                  const subtopics = Array.isArray(topic.subtopics) ? topic.subtopics : [];
-                  const subSections = [];
-                  subtopics.forEach((label, idx) => {
-                    const sum = subtopicSummaries[idx] || '';
-                    const guide = subtopicStudyGuides[idx] || '';
-                    if ((sum && String(sum).trim()) || (guide && String(guide).trim())) {
-                      const lines = [];
-                      lines.push(`-- ${label} --`);
-                      if (sum && String(sum).trim()) lines.push('Summary:\n' + String(sum).trim());
-                      if (guide && String(guide).trim()) lines.push('Study Guide:\n' + String(guide).trim());
-                      subSections.push(lines.join('\n'));
-                    }
-                  });
-                  if (subSections.length > 0) {
-                    parts.push('== Subtopic Notes ==\n' + subSections.join('\n\n'));
-                  }
-                  // Reading notes (prefer user notes; fallback to snapshot if available)
-                  const readingSections = [];
-                  (topic.readings || []).forEach((r, idx) => {
-                    const userNote = readingUserNotes[idx] || '';
-                    const snap = readingNotes[idx] || '';
-                    const chosen = (userNote && String(userNote).trim())
-                      ? String(userNote).trim()
-                      : (snap && String(snap).trim())
-                      ? String(snap).trim()
-                      : '';
-                    if (chosen) {
-                      readingSections.push(`-- ${r.title} --\n` + chosen);
-                    }
-                  });
-                  if (readingSections.length > 0) {
-                    parts.push('== Reading Notes ==\n' + readingSections.join('\n\n'));
-                  }
-                  return parts.join('\n\n').trim();
-                }
-                const aggregatedNotes = buildAggregatedNotes();
-                // Try AI first
+                const aggregatedNotes = buildAggregatedNotes(selectedIndexes);
+                const selectedSubtopics = selectedIndexes
+                  .map((idx) => (topic.subtopics || [])[idx])
+                  .filter((label) => typeof label === 'string' && label.trim());
                 const res = await fetch('/api/generate-questions', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     topicTitle: topic.title,
-                    subtopics: topic.subtopics || [],
+                    subtopics: selectedSubtopics,
                     notes: aggregatedNotes,
-                    count: 12,
+                    count: MAX_QUIZ_QUESTIONS,
                   }),
                 });
                 if (res.ok) {
                   const data = await res.json();
                   const q = Array.isArray(data.questions) ? data.questions : [];
                   if (q.length > 0) {
-                    setAiQuestions(q);
-                    setQuestions([]);
-                    setMcqSelected({});
-                    setMcqChecked({});
+                    startQuizSession(q);
                   } else {
-                    // Fallback to local if AI returned no questions
-                    setAiQuestions([]);
-                    setQuestions(generateQuestionsFromSubtopics(topic.subtopics, 10));
+                    runLocalQuestionFallback(localSeeds);
                   }
                 } else {
-                  // Fallback to local on error
-                  setAiQuestions([]);
-                  setQuestions(generateQuestionsFromSubtopics(topic.subtopics, 10));
+                  runLocalQuestionFallback(localSeeds);
                 }
               } catch (_) {
-                // Fallback to local on exception
-                setAiQuestions([]);
-                setQuestions(generateQuestionsFromSubtopics(topic.subtopics, 10));
+                runLocalQuestionFallback(localSeeds);
               } finally {
                 setAiLoading(false);
               }
             }}
           >
-            {aiLoading ? 'Generating...' : ((aiQuestions.length || questions.length) ? 'Regenerate Questions' : 'Generate Questions')}
+            {aiLoading ? 'Generating...' : (quizQuestions.length > 0 ? 'Regenerate Questions' : 'Generate Questions')}
           </button>
-        </div>
-        )}
-        {!qCollapsed && aiError && <div className="progress-text" style={{ color: '#b91c1c', marginTop: 8 }}>{aiError}</div>}
-        {!qCollapsed && (aiQuestions.length > 0 ? (
-          <div className="ai-questions" style={{ marginTop: 10 }}>
-            <ul className="question-list">
-              {aiQuestions.map((q, i) => {
-                const selected = mcqSelected[i];
-                const checked = mcqChecked[i] === true;
-                const correct = Number.isInteger(q.correctIndex) ? q.correctIndex : -1;
-                return (
-                  <li key={i} className="question-item mcq-card">
-                    <div className="mcq-stem"><strong>Q{i + 1}.</strong> {q.question}</div>
-                    <div className="mcq-options">
-                      {(q.choices || []).map((c, j) => {
-                        const isSelected = selected === j;
-                        const isCorrect = checked && j === correct;
-                        const isWrong = checked && isSelected && j !== correct;
-                        const cls =
-                          'mcq-option' +
-                          (isCorrect ? ' correct' : '') +
-                          (isWrong ? ' wrong' : '') +
-                          (!isCorrect && !isWrong && isSelected ? ' selected' : '');
-                        return (
-                          <button
-                            key={j}
-                            type="button"
-                            className={cls}
-                            onClick={() => setMcqSelected((prev) => ({ ...prev, [i]: j }))}
-                          >
-                            {String.fromCharCode(65 + j)}. {c}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="mcq-actions">
-                      <button
-                        className="btn"
-                        onClick={() => setMcqChecked((prev) => ({ ...prev, [i]: true }))}
-                        disabled={checked || typeof selected !== 'number'}
-                      >
-                        {checked ? 'Checked' : 'Check'}
-                      </button>
-                      {checked && correct >= 0 && (
-                        <span className={'mcq-result ' + (selected === correct ? 'ok' : 'bad')}>
-                          {selected === correct ? 'Correct!' : `Incorrect. Correct answer: ${String.fromCharCode(65 + correct)}.`}
-                        </span>
-                      )}
-                    </div>
-                    {checked && q.explanation ? (
-                      <div className="mcq-expl">
-                        <strong>Why:</strong> <span>{q.explanation}</span>
-                      </div>
-                    ) : null}
-                    {showAnswers && correct >= 0 && (
-                      <div className="mcq-expl">
-                        <strong>Answer:</strong> {String.fromCharCode(65 + correct)}
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+          <div style={{ fontSize: 13, color: '#475569' }}>
+            {selectedSubtopicCount === 0
+              ? 'Select at least one subtopic to enable.'
+              : quizLoading
+              ? 'Generating questions...'
+              : 'Questions load automatically once ready.'}
           </div>
-        ) : (questions.length > 0 && (
-          <ul className="question-list">
-            {questions.map((q, i) => (
-              <li key={i} className="question-item">{q}</li>
-            ))}
-          </ul>
-        )))}
+        </div>
+        {aiError && <div className="progress-text" style={{ color: '#b91c1c', marginTop: 8 }}>{aiError}</div>}
       </div>
 
       <div className="notes">
@@ -467,6 +681,190 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
               ) : (
                 <div className="progress-text">No notes were saved when this reading was marked complete.</div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quizModalOpen && (
+        <div className="modal-overlay" onClick={handleQuizClose}>
+          <div
+            className="modal-dialog"
+            style={{
+              maxWidth: 680,
+              width: '90%',
+              maxHeight: '90vh',
+              padding: '24px 26px',
+              borderRadius: 18,
+              background: '#fff',
+              boxShadow: '0 20px 45px rgba(15,23,42,0.15)',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header" style={{ paddingBottom: 12, borderBottom: '1px solid #e2e8f0' }}>
+              <strong>Practice Quiz</strong>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn" onClick={handleQuizRestart}>Restart</button>
+                <button className="btn" onClick={handleQuizClose}>Close</button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, paddingTop: 16 }}>
+            {quizLoading && quizQuestions.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                <div style={{ fontSize: 20, fontWeight: 600, color: '#2563eb' }}>Generating questions…</div>
+                <div style={{ marginTop: 8, color: '#475569' }}>Hang tight while we build a tailored quiz.</div>
+              </div>
+            ) : quizQuestions.length === 0 ? (
+              <div className="progress-text">No questions available yet.</div>
+            ) : quizComplete ? (
+              <div className="quiz-summary">
+                <div style={{ fontSize: 18, fontWeight: 600 }}>Quiz complete</div>
+                <div style={{ fontSize: 32, fontWeight: 700, margin: '8px 0', color: '#15803d' }}>
+                  {quizScore}/{quizQuestions.length}
+                </div>
+                <div className="progress-text">Nice work! Generate again, review answers, or close this window to resume studying.</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14, position: 'sticky', top: 0, background: '#fff', paddingBottom: 10 }}>
+                  <button className="btn primary" onClick={handleQuizRestart}>Retake Quiz</button>
+                  <button className="btn" onClick={() => setQuizReviewOpen((prev) => !prev)}>
+                    {quizReviewOpen ? 'Hide Review' : 'Review Answers'}
+                  </button>
+                  <button className="btn" style={quizPrimaryButtonStyle(false)} onClick={handleQuizClose}>Close & Resume</button>
+                </div>
+                {quizReviewOpen && (
+                  <div className="quiz-review-list" style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {quizQuestions.map((question, idx) => {
+                      const selected = quizSelections[idx];
+                      const correct = question.correctIndex;
+                      const status = quizCheckedState[idx];
+                      const isCorrect = status === 'correct';
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            border: '1px solid #e2e8f0',
+                            borderRadius: 10,
+                            padding: '12px 14px',
+                            background: '#fff',
+                            boxShadow: '0 6px 16px rgba(15,23,42,0.06)',
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                            Q{idx + 1}. {question.question}
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 14 }}>
+                            <span style={{ color: isCorrect ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
+                              Your answer: {Number.isInteger(selected) ? `${choiceLabel(selected)}${question.choices ? `. ${question.choices[selected]}` : ''}` : '—'}
+                            </span>
+                            <span>
+                              Correct: {Number.isInteger(correct) ? `${choiceLabel(correct)}${question.choices ? `. ${question.choices[correct]}` : ''}` : '—'}
+                            </span>
+                          </div>
+                          {question.explanation ? (
+                            <div style={{ marginTop: 8, fontSize: 13, color: '#475569' }}>
+                              <strong>Explanation:</strong> {question.explanation}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14, color: '#475569', marginBottom: 6, position: 'sticky', top: 0, background: '#fff', paddingBottom: 8, zIndex: 1 }}>
+                  <div>Question {quizIndex + 1} of {quizQuestions.length}</div>
+                  <div>Score: {quizScore}/{quizQuestions.length}</div>
+                </div>
+                <div style={{ width: '100%', height: 4, borderRadius: 999, background: '#e2e8f0', marginBottom: 12 }}>
+                  <div style={{ width: `${quizProgressPct}%`, height: '100%', borderRadius: 999, background: '#22c55e', transition: 'width 0.25s ease' }} />
+                </div>
+                <div
+                  className="quiz-card"
+                  style={{
+                    padding: '16px 18px',
+                    borderRadius: 12,
+                    border: '1px solid #e2e8f0',
+                    background: '#fff',
+                    boxShadow: '0 10px 25px rgba(15,23,42,0.08)',
+                  }}
+                >
+                  <div className="mcq-stem" style={{ fontWeight: 600, fontSize: 16, marginBottom: 14 }}>
+                    {currentQuizQuestion?.question}
+                  </div>
+                  <div className="mcq-options" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {(currentQuizQuestion?.choices || []).map((choice, idx) => {
+                      const isSelected = currentQuizSelection === idx;
+                      const isCorrect = currentQuizChecked && idx === currentQuizQuestion.correctIndex;
+                      const isWrong = currentQuizChecked && isSelected && idx !== currentQuizQuestion.correctIndex;
+                      const cls =
+                        'mcq-option' +
+                        (isCorrect ? ' correct' : '') +
+                        (isWrong ? ' wrong' : '') +
+                        (!isCorrect && !isWrong && isSelected ? ' selected' : '');
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          className={cls}
+                          onClick={() => handleQuizSelect(idx)}
+                          disabled={currentQuizChecked}
+                          style={{
+                            textAlign: 'left',
+                            borderRadius: 10,
+                            padding: '10px 12px',
+                          }}
+                        >
+                          <span style={{ fontWeight: 600, marginRight: 6 }}>{String.fromCharCode(65 + idx)}.</span>
+                          {choice}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="mcq-actions" style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', position: 'sticky', bottom: 0, background: '#fff', paddingTop: 10, paddingBottom: 10 }}>
+                  <button
+                    className="btn"
+                    style={quizPrimaryButtonStyle(!Number.isInteger(currentQuizSelection) || currentQuizChecked)}
+                    onClick={handleQuizCheck}
+                    disabled={!Number.isInteger(currentQuizSelection) || currentQuizChecked}
+                  >
+                    {currentQuizChecked ? 'Checked' : 'Check Answer'}
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={handleQuizNext}
+                    disabled={!currentQuizChecked}
+                  >
+                    {quizIndex + 1 === quizQuestions.length ? 'Finish Quiz' : 'Next Question'}
+                  </button>
+                </div>
+                {currentQuizChecked && (
+                  <div
+                    className="quiz-expl-card"
+                    style={{
+                      marginTop: 14,
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: '1px solid #fde68a',
+                      background: '#fef9c3',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                      {currentQuizCorrect ? '✅ Correct' : '❌ Not quite'}
+                    </div>
+                    <div>
+                      <strong>Answer:</strong> {currentQuizQuestion && Number.isInteger(currentQuizQuestion.correctIndex) ? `${choiceLabel(currentQuizQuestion.correctIndex)}. ${currentQuizQuestion.choices?.[currentQuizQuestion.correctIndex] ?? ''}` : '—'}
+                    </div>
+                    {quizShowExplanation && currentQuizQuestion?.explanation ? (
+                      <div style={{ marginTop: 6, color: '#92400e' }}>{currentQuizQuestion.explanation}</div>
+                    ) : null}
+                  </div>
+                )}
+              </>
+            )}
             </div>
           </div>
         </div>

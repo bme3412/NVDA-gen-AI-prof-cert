@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Sidebar from '../components/Sidebar';
 import MainContent from '../components/MainContent';
 import { examTopics } from '../lib/topics';
-import { loadFromLocalStorage, saveToLocalStorage, calculateProgress, createDebounced, scrollToId, nowTs } from '../lib/storage';
+import { loadFromLocalStorage, saveToLocalStorage, calculateProgress, createDebounced, nowTs } from '../lib/storage';
 
 export default function Page() {
   const [data, setData] = useState({ topics: {}, lastExport: null });
@@ -25,35 +25,54 @@ export default function Page() {
     (async () => {
       try {
         const r = await fetch('/api/notes', { cache: 'no-store' });
+        let remote = null;
         if (r.ok) {
-          const remote = await r.json();
-          if (remote && remote.topics && typeof remote.topics === 'object') {
-            const localCount = Object.keys(loaded.topics || {}).length;
-            const remoteCount = Object.keys(remote.topics || {}).length;
-            if (remoteCount > localCount) {
-              setData(remote);
-              saveToLocalStorage(remote);
-              return;
-            }
-          }
+          remote = await r.json();
         } else if (r.status === 204) {
           cloudEnabledRef.current = false; // no cloud configured
         }
       } catch {}
-      // If still empty after cloud attempt, try static seed file committed to repo
+      // Load seed file (if present)
+      let seed = null;
       try {
-        const hasLocal = Object.keys(loaded.topics || {}).length > 0;
-        if (!hasLocal) {
-          const seedResp = await fetch('/notes-seed.json', { cache: 'no-store' });
-          if (seedResp.ok) {
-            const seed = await seedResp.json();
-            if (seed && seed.topics && typeof seed.topics === 'object' && Object.keys(seed.topics).length > 0) {
-              setData(seed);
-              saveToLocalStorage(seed);
-            }
+        const seedResp = await fetch('/notes-seed.json', { cache: 'no-store' });
+        if (seedResp.ok) seed = await seedResp.json();
+      } catch {}
+      // Choose the best dataset among local, remote, seed
+      const score = (d) => {
+        try {
+          const ts = typeof d?.lastExport === 'number' ? d.lastExport : 0;
+          const cnt = Object.keys(d?.topics || {}).length;
+          return ts || cnt ? ts * 1 + cnt : 0;
+        } catch { return 0; }
+      };
+      const candidates = [
+        { key: 'local', data: loaded },
+        { key: 'remote', data: typeof remote === 'object' ? remote : null },
+        { key: 'seed', data: typeof seed === 'object' ? seed : null },
+      ].filter((c) => c.data && (Object.keys(c.data.topics || {}).length > 0));
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => score(b.data) - score(a.data));
+        const best = candidates[0];
+        // If best is not the already loaded local, adopt it
+        const isSame =
+          best.key === 'local' ||
+          JSON.stringify(best.data?.topics || {}) === JSON.stringify(loaded?.topics || {});
+        if (!isSame) {
+          setData(best.data);
+          saveToLocalStorage(best.data);
+          // If the best is seed and cloud is enabled, push it to cloud once
+          if (best.key === 'seed' && cloudEnabledRef.current) {
+            try {
+              await fetch('/api/notes', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(Object.assign({}, best.data, { lastExport: nowTs() })),
+              });
+            } catch {}
           }
         }
-      } catch {}
+      }
     })();
   }, []);
 
@@ -278,7 +297,7 @@ export default function Page() {
       <Sidebar
         progress={progress}
         activeTopicId={activeTopicId}
-        setActiveTopicId={(id) => { setActiveTopicId(id); scrollToId(`topic-${id}`); }}
+        setActiveTopicId={setActiveTopicId}
         isTopicComplete={isTopicComplete}
         onClear={clearAllData}
         onExport={exportAll}
@@ -289,6 +308,7 @@ export default function Page() {
       <input type="file" ref={fileInputRef} accept="application/json" style={{ display: 'none' }} onChange={handleImportFile} />
       <MainContent
         topics={examTopics}
+        activeTopicId={activeTopicId}
         getTopicState={getTopicState}
         toggleReadingComplete={toggleReadingComplete}
         updateNotes={updateNotes}
