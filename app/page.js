@@ -10,8 +10,6 @@ export default function Page() {
   const [hasLoaded, setHasLoaded] = useState(false);
   const [activeTopicId, setActiveTopicId] = useState(() => (examTopics[0] ? examTopics[0].id : null));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const savingStatusRef = useRef({}); // topicId -> 'idle' | 'saving' | 'saved'
-  const debouncersRef = useRef({}); // topicId -> debounced function
   const cloudDebouncerRef = useRef(null); // global debouncer for cloud sync
   const cloudEnabledRef = useRef(true); // disable cloud sync if server not configured
 
@@ -198,26 +196,6 @@ export default function Page() {
     });
   }
 
-  function ensureDebouncer(topicId) {
-    const key = String(topicId);
-    if (!debouncersRef.current[key]) debouncersRef.current[key] = createDebounced(2000);
-    return debouncersRef.current[key];
-  }
-
-  function setSavingStatus(topicId, status) {
-    savingStatusRef.current[String(topicId)] = status;
-    setData((prev) => Object.assign({}, prev));
-  }
-
-  function updateNotes(topicId, notes) {
-    updateTopicState(topicId, (t) => { t.notes = notes; });
-    setSavingStatus(topicId, 'saving');
-    const debouncer = ensureDebouncer(topicId);
-    debouncer(() => { setSavingStatus(topicId, 'saved'); });
-  }
-
-  function forceSaveNotes(topicId) { setSavingStatus(topicId, 'saved'); }
-
   function updateSubtopicSummary(topicId, subIndex, html) {
     updateTopicState(topicId, (t) => {
       if (!t.subtopicSummaries) t.subtopicSummaries = {};
@@ -254,10 +232,7 @@ export default function Page() {
         activeTopicId={activeTopicId}
         getTopicState={getTopicState}
         toggleReadingComplete={toggleReadingComplete}
-        updateNotes={updateNotes}
         updateReadingNotes={updateReadingNotes}
-        forceSaveNotes={forceSaveNotes}
-        savingStatusRef={savingStatusRef}
         updateSubtopicSummary={updateSubtopicSummary}
         updateSubtopicStudyGuide={updateSubtopicStudyGuide}
       />

@@ -7,10 +7,7 @@ export default function MainContent({
   activeTopicId,
   getTopicState,
   toggleReadingComplete,
-  updateNotes,
   updateReadingNotes,
-  forceSaveNotes,
-  savingStatusRef,
   updateSubtopicSummary,
   updateSubtopicStudyGuide,
 }) {
@@ -67,10 +64,7 @@ export default function MainContent({
           topic={topicToRender}
           getTopicState={getTopicState}
           toggleReadingComplete={toggleReadingComplete}
-          updateNotes={updateNotes}
           updateReadingNotes={updateReadingNotes}
-          forceSaveNotes={forceSaveNotes}
-          savingStatusRef={savingStatusRef}
           updateSubtopicSummary={updateSubtopicSummary}
           updateSubtopicStudyGuide={updateSubtopicStudyGuide}
         />

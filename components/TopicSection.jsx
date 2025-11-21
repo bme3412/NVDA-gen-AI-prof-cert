@@ -5,15 +5,13 @@ import RichNotesEditor from './RichNotesEditor';
 
 const MAX_QUIZ_QUESTIONS = 10;
 
-export default function TopicSection({ topic, getTopicState, toggleReadingComplete, updateNotes, updateReadingNotes, forceSaveNotes, savingStatusRef, updateSubtopicSummary, updateSubtopicStudyGuide }) {
+export default function TopicSection({ topic, getTopicState, toggleReadingComplete, updateReadingNotes, updateSubtopicSummary, updateSubtopicStudyGuide }) {
   const { readingsComplete, notes, readingCompletedAt = {}, readingNotes = {}, readingUserNotes = {}, subtopicSummaries = {}, subtopicStudyGuides = {} } = getTopicState(topic.id);
-  const savingStatus = (savingStatusRef.current || {})[String(topic.id)] || 'idle';
   const readings = topic.readings || [];
   const allComplete = readings.length > 0 && readingsComplete.length === readings.length;
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const [openReadingIdx, setOpenReadingIdx] = useState(null);
-  const [notesCollapsed, setNotesCollapsed] = useState(false);
   const [openReadingEditorIdx, setOpenReadingEditorIdx] = useState(null);
   const [readingSaveState, setReadingSaveState] = useState({}); // idx -> 'idle'|'saving'|'saved'
   const readingDebouncersRef = useRef({});
@@ -434,6 +432,7 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
   const selectedReadingIndexes = getIncludedReadingIndexes();
   const selectedReadingCount = selectedReadingIndexes.length;
   const selectedSourceCount = selectedSubtopicCount + selectedReadingCount;
+  const hasSelectedSources = selectedSourceCount > 0;
   const currentQuizQuestion = quizQuestions[quizIndex] || null;
   const currentQuizSelection = quizSelections[quizIndex];
   const currentQuizStatus = quizCheckedState[quizIndex];
@@ -456,11 +455,113 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
     };
   }
 
+  async function handleGenerateQuestions() {
+    setAiError('');
+    setAiLoading(true);
+    const selectedSubtopicIdx = getIncludedSubtopicIndexes({ strict: true });
+    const selectedReadingIdx = getIncludedReadingIndexes();
+    if (selectedSubtopicIdx.length === 0 && selectedReadingIdx.length === 0) {
+      setAiError('Select at least one subtopic or reading to generate questions.');
+      setAiLoading(false);
+      return;
+    }
+    const localSeeds = [
+      ...buildSubtopicQuestionSeeds(selectedSubtopicIdx),
+      ...buildReadingQuestionSeeds(selectedReadingIdx),
+    ];
+    if (localSeeds.length === 0) {
+      setAiError('Add summaries or notes for the selected items before generating.');
+      setQuizModalOpen(false);
+      setQuizLoading(false);
+      setAiLoading(false);
+      return;
+    }
+    beginQuizGeneration();
+    try {
+      const aggregatedNotes = buildAggregatedNotes(selectedSubtopicIdx);
+      const selectedSubtopics = selectedSubtopicIdx
+        .map((idx) => (topic.subtopics || [])[idx])
+        .filter((label) => typeof label === 'string' && label.trim())
+        .map((label) => `Topic: ${label.trim()}`);
+      const selectedReadings = selectedReadingIdx
+        .map((idx) => {
+          const entry = readings[idx];
+          if (entry && typeof entry.title === 'string' && entry.title.trim()) {
+            return `Reading: ${entry.title.trim()}`;
+          }
+          return `Reading ${idx + 1}`;
+        });
+      const selectedSources = [...selectedSubtopics, ...selectedReadings];
+      const res = await fetch('/api/generate-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topicTitle: topic.title,
+          subtopics: selectedSources,
+          notes: aggregatedNotes,
+          count: MAX_QUIZ_QUESTIONS,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const remoteQuestions = Array.isArray(data.questions) ? data.questions : [];
+        const sanitized = sanitizeQuestionSet(remoteQuestions);
+        if (sanitized.length > 0) {
+          startQuizSession(sanitized);
+        } else {
+          runLocalQuestionFallback(localSeeds);
+        }
+      } else {
+        runLocalQuestionFallback(localSeeds);
+      }
+    } catch (_) {
+      runLocalQuestionFallback(localSeeds);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   return (
     <section className="topic-section" id={`topic-${topic.id}`} data-topicid={String(topic.id)}>
       <div className="topic-header">
         <div className="topic-title">{topic.title}</div>
         <div className="topic-weight">{allComplete ? 'Complete ✓' : `${topic.weight}% weight`}</div>
+      </div>
+
+      <div className="quiz-launch-card">
+        <div>
+          <p className="eyebrow">Practice mode</p>
+          <h2>Generate questions anytime</h2>
+          <p className="quiz-launch-copy">
+            {hasSelectedSources
+              ? `Ready to build a quiz using ${selectedSourceCount} selected section${selectedSourceCount === 1 ? '' : 's'}.`
+              : 'Tap the 🎯 icon next to any subtopic or reading to stage it for the quiz.'}
+          </p>
+        </div>
+        <div className="quiz-launch-actions">
+          <button
+            className="btn primary large question-btn"
+            disabled={!hasSelectedSources || aiLoading}
+            onClick={handleGenerateQuestions}
+          >
+            {aiLoading
+              ? 'Generating...'
+              : quizQuestions.length > 0
+              ? 'Regenerate Questions'
+              : 'Generate Questions'}
+          </button>
+          <span className="quiz-launch-hint">
+            {hasSelectedSources
+              ? 'You can keep scrolling—this shortcut stays pinned.'
+              : 'Need at least one selection to unlock the button.'}
+          </span>
+          {quizQuestions.length > 0 && !quizModalOpen ? (
+            <button className="btn ghost" onClick={() => setQuizModalOpen(true)}>
+              Open latest quiz
+            </button>
+          ) : null}
+          {aiError ? <div className="quiz-launch-error">{aiError}</div> : null}
+        </div>
       </div>
 
       <div className="subtopics">
@@ -600,9 +701,14 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
                   <a
                     className="reading-link"
                     href={r.url}
-                    target="_blank"
                     rel="noreferrer"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      try {
+                        window.open(r.url, '_blank', 'noopener,noreferrer');
+                      } catch {
+                        window.location.href = r.url;
+                      }
                       if (!readingUserNotes[idx]) {
                         updateReadingNotes(topic.id, idx, '');
                       }
@@ -615,14 +721,6 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
                 {readingCompletedAt[idx] ? (
                   <div className="reading-meta">
                     <span className="reading-pill">Completed {formatDate(readingCompletedAt[idx])}</span>
-                    {readingNotes[idx] ? (
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="View saved notes snapshot"
-                        onClick={() => setOpenReadingIdx(idx)}
-                      >📄</button>
-                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -653,15 +751,26 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
 
       {openReadingEditorIdx !== null && (
         <div className="reading-notes">
-          <div className="notes-header">
-            <strong>Notes for: {readings[openReadingEditorIdx]?.title}</strong>
-            <div className="notes-status">
-              {readingSaveState[openReadingEditorIdx] === 'saving'
-                ? 'Saving...'
-                : readingSaveState[openReadingEditorIdx] === 'saved'
-                ? 'Saved'
-                : ''}
+          <div className="notes-header" style={{ flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <strong>Notes for: {readings[openReadingEditorIdx]?.title}</strong>
+              <div className="notes-status">
+                {readingSaveState[openReadingEditorIdx] === 'saving'
+                  ? 'Saving...'
+                  : readingSaveState[openReadingEditorIdx] === 'saved'
+                  ? 'Saved'
+                  : ''}
+              </div>
             </div>
+            {readingNotes[openReadingEditorIdx] ? (
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => setOpenReadingIdx(openReadingEditorIdx)}
+              >
+                View completion snapshot
+              </button>
+            ) : null}
           </div>
           <RichNotesEditor
             value={readingUserNotes[openReadingEditorIdx] || ''}
@@ -673,126 +782,24 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
             }}
             placeholder="Notes for this reading..."
           />
-          <div className="notes-header" style={{ marginTop: 6 }}>
+          <div className="notes-header" style={{ marginTop: 8, alignItems: 'center', gap: 12 }}>
             <div className="char-count">{plainTextLength(readingUserNotes[openReadingEditorIdx])} characters</div>
-            <button className="btn" onClick={() => setReadingStatus(openReadingEditorIdx, 'saved')}>Save Notes</button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {readingNotes[openReadingEditorIdx] ? (
+                <button
+                  className="btn ghost"
+                  onClick={() => setOpenReadingIdx(openReadingEditorIdx)}
+                >
+                  View completion snapshot
+                </button>
+              ) : null}
+              <button className="btn" onClick={() => setReadingStatus(openReadingEditorIdx, 'saved')}>
+                Save Notes
+              </button>
+            </div>
           </div>
         </div>
       )}
-
-      <div className="questions">
-        {quizQuestions.length > 0 && !quizModalOpen ? (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-            <button className="btn" onClick={() => setQuizModalOpen(true)}>Open Quiz</button>
-          </div>
-        ) : null}
-        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <button
-            className="btn primary"
-            disabled={aiLoading}
-            onClick={async () => {
-              setAiError('');
-              setAiLoading(true);
-              const selectedSubtopicIdx = getIncludedSubtopicIndexes({ strict: true });
-              const selectedReadingIdx = getIncludedReadingIndexes();
-              if (selectedSubtopicIdx.length === 0 && selectedReadingIdx.length === 0) {
-                setAiError('Select at least one subtopic or reading to generate questions.');
-                setAiLoading(false);
-                return;
-              }
-              const localSeeds = [
-                ...buildSubtopicQuestionSeeds(selectedSubtopicIdx),
-                ...buildReadingQuestionSeeds(selectedReadingIdx),
-              ];
-              if (localSeeds.length === 0) {
-                setAiError('Add summaries or notes for the selected items before generating.');
-                setQuizModalOpen(false);
-                setQuizLoading(false);
-                setAiLoading(false);
-                return;
-              }
-              beginQuizGeneration();
-              try {
-                const aggregatedNotes = buildAggregatedNotes(selectedSubtopicIdx);
-                const selectedSubtopics = selectedSubtopicIdx
-                  .map((idx) => (topic.subtopics || [])[idx])
-                  .filter((label) => typeof label === 'string' && label.trim())
-                  .map((label) => `Topic: ${label.trim()}`);
-                const selectedReadings = selectedReadingIdx
-                  .map((idx) => {
-                    const entry = readings[idx];
-                    if (entry && typeof entry.title === 'string' && entry.title.trim()) {
-                      return `Reading: ${entry.title.trim()}`;
-                    }
-                    return `Reading ${idx + 1}`;
-                  });
-                const selectedSources = [...selectedSubtopics, ...selectedReadings];
-                const res = await fetch('/api/generate-questions', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    topicTitle: topic.title,
-                    subtopics: selectedSources,
-                    notes: aggregatedNotes,
-                    count: MAX_QUIZ_QUESTIONS,
-                  }),
-                });
-                if (res.ok) {
-                  const data = await res.json();
-                  const remoteQuestions = Array.isArray(data.questions) ? data.questions : [];
-                  const sanitized = sanitizeQuestionSet(remoteQuestions);
-                  if (sanitized.length > 0) {
-                    startQuizSession(sanitized);
-                  } else {
-                    runLocalQuestionFallback(localSeeds);
-                  }
-                } else {
-                  runLocalQuestionFallback(localSeeds);
-                }
-              } catch (_) {
-                runLocalQuestionFallback(localSeeds);
-              } finally {
-                setAiLoading(false);
-              }
-            }}
-          >
-            {aiLoading ? 'Generating...' : (quizQuestions.length > 0 ? 'Regenerate Questions' : 'Generate Questions')}
-          </button>
-          <div style={{ fontSize: 13, color: '#475569' }}>
-            {selectedSourceCount === 0
-              ? 'Select at least one subtopic or reading to enable.'
-              : quizLoading
-              ? 'Generating questions...'
-              : `Using ${selectedSourceCount} selected source${selectedSourceCount === 1 ? '' : 's'}.`}
-          </div>
-        </div>
-        {aiError && <div className="progress-text" style={{ color: '#b91c1c', marginTop: 8 }}>{aiError}</div>}
-      </div>
-
-      <div className="notes">
-        <div className="notes-header">
-          <strong>Notes</strong>
-          <div className="notes-status">
-            {savingStatus === 'saving' ? 'Saving...' : savingStatus === 'saved' ? 'Saved' : ''}
-            <button className="btn" style={{ marginLeft: 8 }} onClick={() => setNotesCollapsed((v) => !v)}>
-              {notesCollapsed ? 'Expand' : 'Minimize'}
-            </button>
-          </div>
-        </div>
-        {!notesCollapsed && (
-          <>
-            <RichNotesEditor
-              value={notes || ''}
-              onChange={(html) => updateNotes(topic.id, html)}
-              placeholder="Type your notes here..."
-            />
-            <div className="notes-header" style={{ marginTop: 6 }}>
-              <div className="char-count">{plainTextLength(notes)} characters</div>
-              <button className="btn" onClick={() => forceSaveNotes(topic.id)}>Save Notes</button>
-            </div>
-          </>
-        )}
-      </div>
 
       {openReadingIdx !== null && (
         <div className="modal-overlay" onClick={() => setOpenReadingIdx(null)}>
