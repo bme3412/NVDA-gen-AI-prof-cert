@@ -120,12 +120,80 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
     return lines;
   }
 
+  function normalizeWhitespace(value) {
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function clampText(value, limit) {
+    const text = normalizeWhitespace(value);
+    if (!text) return '';
+    if (!limit || text.length <= limit) return text;
+    return `${text.slice(0, Math.max(limit - 3, 0)).trim()}...`;
+  }
+
+  function ensureStemEnding(text) {
+    if (!text) return '';
+    if (/[.!?]$/.test(text)) return text;
+    return `${text}?`;
+  }
+
+  function shuffleChoicesStable(options, seedBase = 1) {
+    const out = [...options];
+    let seed = (seedBase + 1) * 9973;
+    const rand = () => {
+      seed = (seed * 9301 + 49297) % 233280;
+      return seed / 233280;
+    };
+    for (let i = out.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rand() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  }
+
+  function sanitizeQuestionSet(questionSet) {
+    const seedBase = Date.now();
+    const CHOICE_MAX = 170;
+    const STEM_MAX = 200;
+    const EXPL_MAX = 240;
+    return (questionSet || [])
+      .map((question, idx) => {
+        const normalizedChoices = Array.isArray(question.choices)
+          ? question.choices.map((choice, choiceIdx) => ({
+              text: clampText(choice, CHOICE_MAX),
+              isCorrect: choiceIdx === question.correctIndex,
+            }))
+          : [];
+        const filteredChoices = normalizedChoices.filter((entry) => entry.text);
+        if (filteredChoices.length !== 4) return null;
+        const shuffled = shuffleChoicesStable(filteredChoices, seedBase + idx);
+        const correctIndex = shuffled.findIndex((entry) => entry.isCorrect);
+        if (correctIndex < 0) return null;
+        return {
+          question: ensureStemEnding(clampText(question.question, STEM_MAX)),
+          choices: shuffled.map((entry) => entry.text),
+          correctIndex,
+          explanation: clampText(question.explanation, EXPL_MAX),
+        };
+      })
+      .filter(Boolean);
+  }
+
   function getIncludedSubtopicIndexes({ strict = false } = {}) {
     const labels = Array.isArray(topic.subtopics) ? topic.subtopics : [];
     const selected = labels
       .map((_, idx) => (subtopicsIncluded[idx] ? idx : null))
       .filter((idx) => idx !== null);
     return selected;
+  }
+
+  function getIncludedReadingIndexes() {
+    const items = Array.isArray(readings) ? readings : [];
+    return items
+      .map((_, idx) => (readingIncluded[idx] ? idx : null))
+      .filter((idx) => idx !== null);
   }
 
   function buildSubtopicQuestionSeeds(indexes) {
@@ -149,6 +217,36 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
           pushSeed(`Focus on ${label} and how it applies to Gen AI workloads.`, 'label');
         } else {
           pushSeed(`Ensure mastery of ${label} so it can be applied during the exam.`, 'label');
+        }
+      });
+    return seeds;
+  }
+
+  function buildReadingQuestionSeeds(indexes) {
+    const seeds = [];
+    indexes
+      .filter((n) => Number.isInteger(n) && n >= 0)
+      .sort((a, b) => a - b)
+      .forEach((idx) => {
+        const reading = readings[idx] || {};
+        const label = String(reading.title || `Reading ${idx + 1}`).trim() || `Reading ${idx + 1}`;
+        const sourceHtml = (() => {
+          const user = readingUserNotes[idx];
+          if (user && String(user).trim()) return String(user);
+          const snap = readingNotes[idx];
+          if (snap && String(snap).trim()) return String(snap);
+          return '';
+        })();
+        const lines = extractNoteLines(sourceHtml, 3);
+        const pushSeed = (fact) => {
+          const trimmed = String(fact || '').trim();
+          if (!trimmed) return;
+          seeds.push({ label, fact: trimmed, detailType: 'reading' });
+        };
+        if (lines.length > 0) {
+          lines.forEach((line) => pushSeed(line));
+        } else {
+          pushSeed(`Review ${label} and apply its recommendations to Gen AI workloads.`);
         }
       });
     return seeds;
@@ -179,9 +277,10 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
     setQuizModalOpen(true);
   }
 
-  function runLocalQuestionFallback(seedLines) {
-    const mcqs = generateQuestionsFromSubtopics(seedLines, 10);
-    startQuizSession(mcqs);
+  function runLocalQuestionFallback(seeds) {
+    const mcqs = generateQuestionsFromSubtopics(seeds, 10);
+    const sanitized = sanitizeQuestionSet(mcqs);
+    startQuizSession(sanitized);
   }
 
   function handleQuizSelect(optionIdx) {
@@ -332,6 +431,9 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
 
   const selectedSubtopicIndexes = getIncludedSubtopicIndexes();
   const selectedSubtopicCount = selectedSubtopicIndexes.length;
+  const selectedReadingIndexes = getIncludedReadingIndexes();
+  const selectedReadingCount = selectedReadingIndexes.length;
+  const selectedSourceCount = selectedSubtopicCount + selectedReadingCount;
   const currentQuizQuestion = quizQuestions[quizIndex] || null;
   const currentQuizSelection = quizSelections[quizIndex];
   const currentQuizStatus = quizCheckedState[quizIndex];
@@ -365,7 +467,7 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
           <div>
             <strong>Select Topics & Build a Quiz</strong>
-            <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>Toggle 🎯 to include subtopics. Add readings below, then hit Generate.</div>
+            <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>Toggle 🎯 next to subtopics or readings to feed the quiz generator.</div>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button className="btn ghost" onClick={selectAllSubtopics}>Select All</button>
@@ -485,56 +587,65 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
           <div className="progress-text">No readings provided.</div>
         ) : (
           readings.map((r, idx) => (
-            <div key={r.url} className="reading-row">
-              <input
-                type="checkbox"
-                checked={readingsComplete.includes(idx)}
-                onChange={() => toggleReadingComplete(topic.id, idx)}
-              />
-              <a
-                className="reading-link"
-                href={r.url}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => {
-                  // Open per-reading notes editor; initialize if not present
-                  if (!readingUserNotes[idx]) {
-                    updateReadingNotes(topic.id, idx, '');
-                  }
-                  setOpenReadingEditorIdx(idx);
-                }}
-              >
-                {r.title}
-              </a>
-              <button
-                className="icon-btn"
-                style={{ marginLeft: 6, background: readingIncluded[idx] ? '#e6f5cf' : '#fff' }}
-                title={readingIncluded[idx] ? 'Included in Generate Questions' : 'Click to include in Generate Questions'}
-                onClick={() => setReadingIncluded((prev) => ({ ...prev, [idx]: !prev[idx] }))}
-              >🎯</button>
-              {readingCompletedAt[idx] ? (
-                <span className="reading-meta">Completed: {formatDate(readingCompletedAt[idx])}
-                  {readingNotes[idx] ? (
-                    <button
-                      className="icon-btn"
-                      title="View saved notes snapshot"
-                      onClick={() => setOpenReadingIdx(idx)}
-                      style={{ marginLeft: 6 }}
-                    >📄</button>
-                  ) : null}
-                </span>
-              ) : null}
-              <button
-                className="icon-btn"
-                style={{ marginLeft: 6 }}
-                title="Open notes for this reading"
-                onClick={() => {
-                  if (!readingUserNotes[idx]) {
-                    updateReadingNotes(topic.id, idx, '');
-                  }
-                  setOpenReadingEditorIdx((cur) => (cur === idx ? null : idx));
-                }}
-              >📝</button>
+            <div key={r.url || `${topic.id}-${idx}`} className="reading-row">
+              <div className="reading-main">
+                <div className="reading-title-row">
+                  <input
+                    type="checkbox"
+                    title="Mark reading complete"
+                    aria-label="Mark reading complete"
+                    checked={readingsComplete.includes(idx)}
+                    onChange={() => toggleReadingComplete(topic.id, idx)}
+                  />
+                  <a
+                    className="reading-link"
+                    href={r.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => {
+                      if (!readingUserNotes[idx]) {
+                        updateReadingNotes(topic.id, idx, '');
+                      }
+                      setOpenReadingEditorIdx(idx);
+                    }}
+                  >
+                    {r.title}
+                  </a>
+                </div>
+                {readingCompletedAt[idx] ? (
+                  <div className="reading-meta">
+                    <span className="reading-pill">Completed {formatDate(readingCompletedAt[idx])}</span>
+                    {readingNotes[idx] ? (
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="View saved notes snapshot"
+                        onClick={() => setOpenReadingIdx(idx)}
+                      >📄</button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <div className="reading-actions">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  style={{ background: readingIncluded[idx] ? '#e6f5cf' : '#fff' }}
+                  title={readingIncluded[idx] ? 'Included in Generate Questions' : 'Click to include in Generate Questions'}
+                  onClick={() => setReadingIncluded((prev) => ({ ...prev, [idx]: !prev[idx] }))}
+                >🎯</button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="Open notes for this reading"
+                  onClick={() => {
+                    if (!readingUserNotes[idx]) {
+                      updateReadingNotes(topic.id, idx, '');
+                    }
+                    setOpenReadingEditorIdx((cur) => (cur === idx ? null : idx));
+                  }}
+                >📝</button>
+              </div>
             </div>
           ))
         )}
@@ -582,15 +693,19 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
             onClick={async () => {
               setAiError('');
               setAiLoading(true);
-              const selectedIndexes = getIncludedSubtopicIndexes({ strict: true });
-              if (selectedIndexes.length === 0) {
-                setAiError('Select at least one subtopic to generate questions.');
+              const selectedSubtopicIdx = getIncludedSubtopicIndexes({ strict: true });
+              const selectedReadingIdx = getIncludedReadingIndexes();
+              if (selectedSubtopicIdx.length === 0 && selectedReadingIdx.length === 0) {
+                setAiError('Select at least one subtopic or reading to generate questions.');
                 setAiLoading(false);
                 return;
               }
-              const localSeeds = buildSubtopicQuestionSeeds(selectedIndexes);
+              const localSeeds = [
+                ...buildSubtopicQuestionSeeds(selectedSubtopicIdx),
+                ...buildReadingQuestionSeeds(selectedReadingIdx),
+              ];
               if (localSeeds.length === 0) {
-                setAiError('Need more notes or summaries for the selected subtopics.');
+                setAiError('Add summaries or notes for the selected items before generating.');
                 setQuizModalOpen(false);
                 setQuizLoading(false);
                 setAiLoading(false);
@@ -598,25 +713,36 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
               }
               beginQuizGeneration();
               try {
-                const aggregatedNotes = buildAggregatedNotes(selectedIndexes);
-                const selectedSubtopics = selectedIndexes
+                const aggregatedNotes = buildAggregatedNotes(selectedSubtopicIdx);
+                const selectedSubtopics = selectedSubtopicIdx
                   .map((idx) => (topic.subtopics || [])[idx])
-                  .filter((label) => typeof label === 'string' && label.trim());
+                  .filter((label) => typeof label === 'string' && label.trim())
+                  .map((label) => `Topic: ${label.trim()}`);
+                const selectedReadings = selectedReadingIdx
+                  .map((idx) => {
+                    const entry = readings[idx];
+                    if (entry && typeof entry.title === 'string' && entry.title.trim()) {
+                      return `Reading: ${entry.title.trim()}`;
+                    }
+                    return `Reading ${idx + 1}`;
+                  });
+                const selectedSources = [...selectedSubtopics, ...selectedReadings];
                 const res = await fetch('/api/generate-questions', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     topicTitle: topic.title,
-                    subtopics: selectedSubtopics,
+                    subtopics: selectedSources,
                     notes: aggregatedNotes,
                     count: MAX_QUIZ_QUESTIONS,
                   }),
                 });
                 if (res.ok) {
                   const data = await res.json();
-                  const q = Array.isArray(data.questions) ? data.questions : [];
-                  if (q.length > 0) {
-                    startQuizSession(q);
+                  const remoteQuestions = Array.isArray(data.questions) ? data.questions : [];
+                  const sanitized = sanitizeQuestionSet(remoteQuestions);
+                  if (sanitized.length > 0) {
+                    startQuizSession(sanitized);
                   } else {
                     runLocalQuestionFallback(localSeeds);
                   }
@@ -633,11 +759,11 @@ export default function TopicSection({ topic, getTopicState, toggleReadingComple
             {aiLoading ? 'Generating...' : (quizQuestions.length > 0 ? 'Regenerate Questions' : 'Generate Questions')}
           </button>
           <div style={{ fontSize: 13, color: '#475569' }}>
-            {selectedSubtopicCount === 0
-              ? 'Select at least one subtopic to enable.'
+            {selectedSourceCount === 0
+              ? 'Select at least one subtopic or reading to enable.'
               : quizLoading
               ? 'Generating questions...'
-              : 'Questions load automatically once ready.'}
+              : `Using ${selectedSourceCount} selected source${selectedSourceCount === 1 ? '' : 's'}.`}
           </div>
         </div>
         {aiError && <div className="progress-text" style={{ color: '#b91c1c', marginTop: 8 }}>{aiError}</div>}
