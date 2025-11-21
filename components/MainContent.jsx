@@ -30,31 +30,25 @@ export default function MainContent({
       <section className="instructions-card">
         <div className="instructions-card-header">
           <div>
-            <p className="eyebrow">Quick start</p>
-            <h1>How to use this tracker</h1>
+            <p className="eyebrow">Crash course</p>
+            <h1>Master Gen AI workflows fast</h1>
             <p className="instructions-lead">
-              Everything you write saves instantly to your browser, and if cloud sync is turned on it mirrors the newest version everywhere else.
+              This workspace guides you through curated Gen AI/LLM topics, hands-on readings, structured notes, and Claude Sonnet 4.5-powered quizzes.
             </p>
-          </div>
-          <div className="instructions-actions">
-            <div className="chip">No data leaves your device unless you enable sync.</div>
           </div>
         </div>
         <ol className="instructions-list">
           <li>
-            <strong>Pick a topic.</strong> Use the sidebar to hop between sections; the reading pane jumps back to the top automatically.
+            <strong>Pick a topic.</strong> Use the sidebar to hop between Gen AI domains like optimization, safety, orchestration, and deployment.
           </li>
           <li>
-            <strong>Read through the material.</strong> Follow the built-in links, take your time, and check items off to log when you finished plus any quick takeaways.
+            <strong>Complete the suggested readings.</strong> Open links in a new tab, follow the playbooks, and mark them done to capture timestamps.
           </li>
           <li>
-            <strong>Capture your notes.</strong> Jot highlights, subtopic snapshots, or mini study guides in the rich editor—no save button needed.
+            <strong>Capture structured notes.</strong> Summarize subtopics, jot experiments, or outline study guides directly in the editor that auto-saves for you.
           </li>
           <li>
-            <strong>Drill with questions.</strong> Tap the target icon beside any topic or reading to generate new questions tailored to that exact section.
-          </li>
-          <li>
-            <strong>Share updates.</strong> When you redeploy, push both the cloud copy and `notes-seed.json` so every browser loads the newest content.
+            <strong>Generate quizzes with Claude.</strong> Toggle 🎯 on the sections you just studied, then hit Generate Questions to have Anthropc Claude Sonnet 4.5 craft targeted practice.
           </li>
         </ol>
       </section>
