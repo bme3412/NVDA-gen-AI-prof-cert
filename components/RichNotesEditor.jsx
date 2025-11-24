@@ -200,6 +200,17 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
     e.preventDefault();
     const html = dt.getData('text/html');
     const text = dt.getData('text/plain');
+    const items = dt.items || [];
+
+    // Check for images in clipboard items
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        e.preventDefault();
+        alert('Images are not allowed to prevent storage quota issues. Please type or paste text only.');
+        return;
+      }
+    }
+
     let toInsert = '';
     if (html) {
       toInsert = sanitizeHtml(html);
@@ -216,6 +227,14 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
     if (toInsert) {
       document.execCommand('insertHTML', false, toInsert);
       handleInput();
+    }
+  }
+
+  function handleDrop(e) {
+    e.preventDefault(); // Prevent default behavior (open as link for some elements)
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+       alert('Dropping files/images is not allowed to prevent storage quota issues.');
+       return;
     }
   }
 
@@ -252,6 +271,7 @@ export default function RichNotesEditor({ value, onChange, placeholder = 'Type y
         onInput={handleInput}
         onBlur={handleInput}
         onPaste={handlePaste}
+        onDrop={handleDrop}
         suppressContentEditableWarning
       />
     </div>

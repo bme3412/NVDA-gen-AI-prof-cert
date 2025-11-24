@@ -23,7 +23,11 @@ export function saveToLocalStorage(store) {
 		topics: store.topics || {},
 		lastExport: store.lastExport || null,
 	};
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+	try {
+		localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+	} catch (e) {
+		console.warn('LocalStorage save failed:', e);
+	}
 }
 
 export function clearAllData() {
